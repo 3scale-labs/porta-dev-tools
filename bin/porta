@@ -1,0 +1,481 @@
+#!/usr/bin/env ruby
+
+require 'optparse'
+require 'digest/sha1'
+require 'yaml'
+
+module Porta
+  DEFAULTS_OPTIONS = {
+    porta_dir: '~/workspace/porta',
+    branch: nil,
+    project: nil,
+    quay_repo: 'quay.io/3scale/porta',
+    threescale_operator_dir: '~/workspace/3scale-operator',
+    apisonator_env_file: '~/workspace/apisonator/.env',
+    openshift_template: 'amp-eval-s3',
+    porta_image: nil,
+    apisonator_image: 'quay.io/3scale/apisonator:nightly',
+    apicast_image: 'quay.io/3scale/apicast:nightly',
+    zync_image: 'quay.io/3scale/zync:nightly',
+    porxy_image: 'quay.io/guicassolato/porxy:latest',
+    memcached_image: 'registry.redhat.io/3scale-amp20/memcached',
+    cluster_endpoint: nil,
+    wildcard_domain: nil,
+    cluster_domain: nil,
+    registry_secret_file_path: nil,
+    aws_access_key: nil,
+    aws_secret_access_key: nil,
+    aws_bucket: nil,
+    aws_region: nil,
+    apicast_secret: 'apicastsecret',
+    dev_gtld: 'local',
+    watch_deploy: false,
+    verbose: false,
+    explain: false
+  }
+
+  def root
+    File.expand_path('../..', __FILE__)
+  end
+  module_function :root
+
+  def settings
+    settings_path = File.join(root, 'config', 'settings.yml')
+    YAML.load_file(settings_path).fetch('settings', {}).transform_keys(&:to_sym)
+  rescue Errno::ENOENT
+    {}
+  end
+  module_function :settings
+
+  class BaseOptionParser < ::OptionParser
+    def initialize
+      @options = DEFAULTS_OPTIONS.merge(Porta.settings)
+
+      super do |opts|
+        opts.banner = banner
+        yield(opts) if block_given?
+      end
+    end
+
+    attr_reader :options
+
+    def parse!
+      super
+      options
+    end
+
+    protected
+
+    def command
+      self.class.name.split('::').last.gsub(/OptionParser/, '').downcase
+    end
+
+    def banner
+      <<~BANNER
+        Usage: porta #{command} [options]
+
+        Options:
+      BANNER
+    end
+  end
+
+  class CommandOptionParser < BaseOptionParser
+    def initialize
+      super do |opts|
+        opts.on(*command_options(:porta_dir, 'Path to the Porta directory in the file system'))
+        yield(opts) if block_given?
+        opts.on(*command_options(:explain, 'Prints the commands instead of executing them', '--explain'))
+        opts.on(*command_options(:verbose, 'Prints every command executed', '--verbose'))
+        opts.on(*options_for_help)
+      end
+
+      options[:branch] ||= porta_branch
+    end
+
+    protected
+
+    def command_options(opt, description, *args, &block)
+      desc = description
+      desc += " (default: '#{options[opt]}')" if options[opt]
+
+      flag = args.shift
+      flag = "--#{opt.to_s.gsub(/_/, '-')}=VALUE" unless flag&.start_with?('-')
+
+      set_value_block = ->(value) { options[opt] = value }
+
+      [flag, *args, desc, block ? block : set_value_block]
+    end
+
+    def options_for_help
+      command_options(:help, 'Prints this help', '--help') do |value|
+        puts self
+        exit
+      end
+    end
+
+    def porta_branch
+      `cd #{options[:porta_dir]}; git rev-parse --abbrev-ref HEAD`.chomp
+    end
+  end
+
+  class RailsEnvOptionParser < CommandOptionParser
+    def initialize
+      super do |opts|
+        yield(opts) if block_given?
+        opts.on(*command_options(:dev_gtld, 'Generic top level domain name (gTLD) for Porta domains'))
+      end
+    end
+  end
+
+  class ServerOptionParser < RailsEnvOptionParser; end
+
+  class SidekiqOptionParser < RailsEnvOptionParser; end
+
+  class ResetOptionParser < RailsEnvOptionParser; end
+
+  class AssetsOptionParser < CommandOptionParser; end
+
+  class TestOptionParser < CommandOptionParser
+    def initialize
+      super
+
+      return if ARGV[1] && !ARGV[1].start_with?('-')
+      puts self
+      exit 128
+    end
+
+    protected
+
+    def banner
+      <<~BANNER
+        Usage: porta #{command} [options] FILE
+
+        Options:
+      BANNER
+    end
+  end
+
+  class CukeOptionParser < TestOptionParser; end
+
+  class DepsOptionParser < CommandOptionParser
+    def initialize
+      super do |opts|
+        opts.on(*command_options(:apisonator_image, 'Apisonator image to launch in a docker'))
+        opts.on(*command_options(:apicast_image, 'APIcast image to launch in a docker'))
+        opts.on(*command_options(:porxy_image, 'Porxy image to launch in a docker'))
+        opts.on(*command_options(:apisonator_env_file, "Path to Apisonator's environment variables file in the file system"))
+      end
+    end
+  end
+
+  class SyncOptionParser < CommandOptionParser; end
+
+  class BuildOptionParser < CommandOptionParser; end
+
+  class PortaImageOptionParser < CommandOptionParser
+    def initialize
+      super do |opts|
+        yield(opts) if block_given?
+      end
+    end
+
+    def parse!
+      super
+
+      options[:project] ||= options[:branch].gsub(/\//, '-')
+      options[:porta_image] ||= build_porta_image
+
+      options
+    end
+
+    protected
+
+    def build_porta_image
+      "#{options[:quay_repo]}:porta-#{options[:project]}"
+    end
+  end
+
+  class PushOptionParser < PortaImageOptionParser
+    def initialize
+      super do |opts|
+        opts.on(*command_options(:quay_repo, 'Name of the quay.io repo where to push the Porta image'))
+        opts.on(*command_options(:project, 'Name of the project. Used to built the image tag to push to quay.io (defaults to the name of the current branch of the Porta repo)'))
+      end
+    end
+  end
+
+  class DeployOptionParser < PortaImageOptionParser
+    def initialize
+      super do |opts|
+        opts.on(*command_options(:threescale_operator_dir, 'Path to the 3scale-operator directory in the file system', '--operator-dir=VALUE'))
+        opts.on(*command_options(:openshift_template, "OpenShift template file – no need to include '.yml' in the end"))
+        opts.on(*command_options(:project, 'Name of the OpenShift project (defaults to the name of the current branch of the Porta repo)'))
+        opts.on(*command_options(:porta_image, "Porta image to deploy (default: '#{options[:quay_repo]}:porta-<project>')"))
+        opts.on(*command_options(:apisonator_image, 'Apisonator image to deploy'))
+        opts.on(*command_options(:apicast_image, 'APIcast image to deploy'))
+        opts.on(*command_options(:zync_image, 'Zync image to deploy'))
+        opts.on(*command_options(:memcached_image, 'Memcached image to deploy'))
+        opts.on(*command_options(:cluster_domain, 'Domain of the OpenShift cluster where to deploy Porta'))
+        opts.on(*command_options(:registry_secret_file_path, 'Path to the Red Hat Registry secret file in the file system', '--secret-file-path=VALUE'))
+        opts.on(*command_options(:watch_deploy, 'Whether to watch status of the pods right after deploy', '--[no-]watch'))
+      end
+    end
+
+    def parse!
+      super
+
+      options[:cluster_endpoint] ||= build_cluster_endpoint
+      options[:wildcard_domain] ||= build_wildcard_domain
+
+      options
+    end
+
+    protected
+
+    def build_cluster_endpoint
+      host = ['api', options[:cluster_domain]].join('.')
+      "https://#{host}:6443"
+    end
+
+    def build_wildcard_domain
+      hashed_project_name = Digest::SHA1.hexdigest(options[:project])[0..6]
+      [hashed_project_name, 'apps', options[:cluster_domain]].join('.')
+    end
+  end
+
+  class HelpOptionParser < BaseOptionParser
+    def initialize
+      super do |opts|
+        puts opts
+        exit
+      end
+    end
+
+    protected
+
+    def banner
+      <<~BANNER
+        Usage: porta CMD
+
+        Commands:
+          server       Starts the Rails server locally
+          sidekiq      Starts a Sidekiq worker locally
+          reset        Resets Porta's databases (Redis and DBMS)
+          assets       Removes node_modules and precompile assets again
+          test         Bundle execs a Porta's Rails test file
+          cuke         Bundle execs a Porta's Cucumber test file
+          deps         Runs (in docker) components that Porta depends upon – Apisonator, APIcast and porxy
+          sync         Resyncs Porta with Apisonator (Sidekiq and Apisonator must both be running)
+          build        Builds Porta for OpenShift
+          push         Pushes latest `system-os` docker image to quay.io
+          deploy       Deploys 3scale to an OpenShift devel cluster, fetching images from quay.io
+          help         Prints this help
+      BANNER
+    end
+  end
+
+  class CommandRunner
+    def initialize(options = {})
+      @options = options
+    end
+
+    attr_reader :options
+
+    def run
+      raise NoMethodError, __method__
+    end
+
+    protected
+
+    def exec_in_porta(envs = {}, &block)
+      run_in_porta do
+        exec envs, block.call
+      end
+    end
+
+    def run_in_porta(&block)
+      Dir.chdir(File.expand_path(options[:porta_dir]), &block)
+    end
+
+    def run_in_3scale_operator(&block)
+      Dir.chdir(File.expand_path(options[:threescale_operator_dir]), &block)
+    end
+
+    def system(*args)
+      print_command(*args)
+      Kernel.system(*args) unless options[:explain]
+      true
+    end
+
+    def exec(*args)
+      print_command(*args)
+      Kernel.exec(*args) unless options[:explain]
+    end
+
+    def print_command(*args)
+      return unless options[:verbose] || options[:explain]
+
+      command_args = args.dup
+      envs = command_args.shift
+      cmd = [envs.respond_to?(:map) ? envs.map { |(env, value)| [env, value].join('=') }.join(' ') : envs, *command_args]
+      puts "[CMD] #{cmd.join(' ')}"
+    end
+  end
+
+  class ServerCommand < CommandRunner
+    def run
+      exec_in_porta('DEV_GTLD' => options[:dev_gtld], 'OBJC_DISABLE_INITIALIZE_FORK_SAFETY' => 'YES', 'UNICORN_WORKERS' => '8') { 'rails server -b 0.0.0.0' }
+    end
+  end
+
+  class SidekiqCommand < CommandRunner
+    def run
+      exec_in_porta('DEV_GTLD' => options[:dev_gtld], 'RAILS_MAX_THREADS' => '5') { 'bundle exec rails sidekiq' }
+    end
+  end
+
+  class ResetCommand < CommandRunner
+    def run
+      exec_in_porta('DEV_GTLD' => options[:dev_gtld]) { "redis-cli flushall && bundle exec rails db:reset MASTER_PASSWORD=p USER_PASSWORD=p APICAST_ACCESS_TOKEN=#{options[:apicast_secret]}" }
+    end
+  end
+
+  class AssetsCommand < CommandRunner
+    def run
+      exec_in_porta { 'rm -rf node_modules && npm install && bundle exec rake assets:clean assets:precompile' }
+    end
+  end
+
+  class TestCommand < CommandRunner
+    def run
+      exec_in_porta { "bundle exec rails test #{ARGV.last}" }
+    end
+  end
+
+  class CukeCommand < CommandRunner
+    def run
+      exec_in_porta { "bundle exec cucumber #{ARGV.last}" }
+    end
+  end
+
+  class DepsCommand < CommandRunner
+    def run
+      # TODO: Add Zync and Sphinx
+      run_apisonator && run_porxy && run_apicast
+    end
+
+    protected
+
+    def run_apisonator
+      run_apisonator_listener && run_apisonator_worker
+    end
+
+    def run_apisonator_listener
+      system("docker run -d --name apisonator --rm -p 3001:3001 --env-file #{options[:apisonator_env_file]} -it #{options[:apisonator_image]} 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log")
+    end
+
+    def run_apisonator_worker
+      system("docker run -d --name apisonator_worker --rm --env-file #{options[:apisonator_env_file]} -it #{options[:apisonator_image]} 3scale_backend_worker run")
+    end
+
+    def run_porxy
+      system("docker run -d --name porxy --rm -p 3008:3008 #{options[:porxy_image]}")
+    end
+
+    def run_apicast
+      system("docker run -d --name apicast --rm -p 8080:8080 -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_secret]}@host.docker.internal:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://host.docker.internal:3001\" #{options[:apicast_image]}")
+    end
+  end
+
+  class SyncCommand < CommandRunner
+    def run
+      exec_in_porta { 'rake backend:storage:enqueue_rewrite' }
+    end
+  end
+
+  class BuildCommand < CommandRunner
+    def run
+      porta_openshift_dir = [options[:porta_dir], 'openshift', 'system'].join('/')
+      Dir.chdir(File.expand_path(porta_openshift_dir)) do
+        exec 'make build'
+      end
+    end
+  end
+
+  class PushCommand < CommandRunner
+    def run
+      porta_image = options[:porta_image]
+      system("docker tag $(docker images -q system-os) #{porta_image}") && exec("docker push #{porta_image}")
+    end
+  end
+
+  class DeployCommand < CommandRunner
+    def run
+      return unless openshift_login && openshift_new_project && upload_registry_secret && openshift_new_app
+      exec('watch -n 3 "oc get pods | grep -viE \'Completed|OOMKilled\'"') if options[:watch_deploy]
+      true
+    end
+
+    protected
+
+    def openshift_login
+      return true if Kernel.system('oc whoami >/dev/null 2>/dev/null')
+
+      puts 'OpenShift login token:'
+      openshift_token = STDIN.gets.chomp
+
+      system("oc login --token=#{openshift_token} --server=#{options[:cluster_endpoint]}")
+    end
+
+    def openshift_new_project
+      system("oc new-project #{options[:project]}")
+    end
+
+    def upload_registry_secret
+      registry_secret_file_path = File.expand_path(options[:registry_secret_file_path])
+      system("oc create -f #{registry_secret_file_path}")
+    end
+
+    def openshift_new_app
+      run_in_3scale_operator do
+        system <<~CMD
+          oc new-app --file pkg/3scale/amp/auto-generated-templates/amp/#{options[:openshift_template]}.yml \
+            --param WILDCARD_DOMAIN="#{options[:wildcard_domain]}" \
+            --param AMP_SYSTEM_IMAGE="#{options[:porta_image]}" \
+            --param AMP_BACKEND_IMAGE="#{options[:apisonator_image]}" \
+            --param AMP_APICAST_IMAGE="#{options[:apicast_image]}" \
+            --param AMP_ZYNC_IMAGE="#{options[:zync_image]}" \
+            --param MEMCACHED_IMAGE="#{options[:memcached_image]}" \
+            #{aws_s3_params} \
+            --param MASTER_PASSWORD=p \
+            --param ADMIN_PASSWORD=p
+        CMD
+      end
+    end
+
+    def aws_s3_params
+      return unless options[:openshift_template].include?('s3')
+
+      %Q{ \
+        --param AWS_ACCESS_KEY_ID="#{options[:aws_access_key]}" \
+        --param AWS_SECRET_ACCESS_KEY="#{options[:aws_secret_access_key]}" \
+        --param AWS_BUCKET="#{options[:aws_bucket]}" \
+        --param AWS_REGION="#{options[:aws_region]}" \
+      }
+    end
+  end
+end
+
+command = ARGV.first&.capitalize
+option_parser_class = begin
+  Porta.const_get("#{command || Help}OptionParser".to_sym)
+rescue NameError => exception
+  Porta::HelpOptionParser if exception.message =~ /uninitialized constant/ or raise
+end
+parser = option_parser_class.new
+options = parser.parse!
+
+command_class = command ? Porta.const_get("#{command}Command".to_sym) : Porta::CommandRunner
+runner = command_class.new(options)
+
+runner.run
