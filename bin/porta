@@ -28,6 +28,7 @@ module Porta
     aws_bucket: nil,
     aws_region: nil,
     apicast_secret: 'apicastsecret',
+    apicast_policies_url: 'https://apicast-staging.proda.3sca.net/policies',
     dev_gtld: 'local',
     watch_deploy: false,
     verbose: false,
@@ -123,6 +124,7 @@ module Porta
       super do |opts|
         yield(opts) if block_given?
         opts.on(*command_options(:dev_gtld, 'Generic top level domain name (gTLD) for Porta domains'))
+        opts.on(*command_options(:apicast_policies_url, 'URL to a public APIcast policy registry'))
       end
     end
   end
@@ -133,9 +135,9 @@ module Porta
 
   class ResetOptionParser < RailsEnvOptionParser; end
 
-  class AssetsOptionParser < CommandOptionParser; end
+  class AssetsOptionParser < RailsEnvOptionParser; end
 
-  class TestOptionParser < CommandOptionParser
+  class TestOptionParser < RailsEnvOptionParser
     def initialize
       super
 
@@ -168,7 +170,7 @@ module Porta
     end
   end
 
-  class SyncOptionParser < CommandOptionParser; end
+  class SyncOptionParser < RailsEnvOptionParser; end
 
   class BuildOptionParser < CommandOptionParser; end
 
@@ -217,6 +219,7 @@ module Porta
         opts.on(*command_options(:memcached_image, 'Memcached image to deploy'))
         opts.on(*command_options(:cluster_domain, 'Domain of the OpenShift cluster where to deploy Porta'))
         opts.on(*command_options(:registry_secret_file_path, 'Path to the Red Hat Registry secret file in the file system', '--secret-file-path=VALUE'))
+        opts.on(*command_options(:apicast_policies_url, 'URL to a public APIcast policy registry'))
         opts.on(*command_options(:watch_deploy, 'Whether to watch status of the pods right after deploy', '--[no-]watch'))
       end
     end
@@ -287,9 +290,16 @@ module Porta
 
     protected
 
+    def porta_common_envs
+      {
+        'DEV_GTLD' => options[:dev_gtld],
+        'APICAST_REGISTRY_URL' => options[:apicast_policies_url]
+      }
+    end
+
     def exec_in_porta(envs = {}, &block)
       run_in_porta do
-        exec envs, block.call
+        exec porta_common_envs.merge(envs), block.call
       end
     end
 
@@ -324,19 +334,19 @@ module Porta
 
   class ServerCommand < CommandRunner
     def run
-      exec_in_porta('DEV_GTLD' => options[:dev_gtld], 'OBJC_DISABLE_INITIALIZE_FORK_SAFETY' => 'YES', 'UNICORN_WORKERS' => '8') { 'rails server -b 0.0.0.0' }
+      exec_in_porta('OBJC_DISABLE_INITIALIZE_FORK_SAFETY' => 'YES', 'UNICORN_WORKERS' => '8') { 'rails server -b 0.0.0.0' }
     end
   end
 
   class SidekiqCommand < CommandRunner
     def run
-      exec_in_porta('DEV_GTLD' => options[:dev_gtld], 'RAILS_MAX_THREADS' => '5') { 'bundle exec rails sidekiq' }
+      exec_in_porta('RAILS_MAX_THREADS' => '5') { 'bundle exec rails sidekiq' }
     end
   end
 
   class ResetCommand < CommandRunner
     def run
-      exec_in_porta('DEV_GTLD' => options[:dev_gtld]) { "redis-cli flushall && bundle exec rails db:reset MASTER_PASSWORD=p USER_PASSWORD=p APICAST_ACCESS_TOKEN=#{options[:apicast_secret]}" }
+      system('redis-cli flushall') && exec_in_porta { "bundle exec rails db:reset MASTER_PASSWORD=p USER_PASSWORD=p APICAST_ACCESS_TOKEN=#{options[:apicast_secret]}" }
     end
   end
 
@@ -446,6 +456,7 @@ module Porta
             --param AMP_APICAST_IMAGE="#{options[:apicast_image]}" \
             --param AMP_ZYNC_IMAGE="#{options[:zync_image]}" \
             --param MEMCACHED_IMAGE="#{options[:memcached_image]}" \
+            --param APICAST_REGISTRY_URL="#{options[:apicast_policies_url]}" \
             #{aws_s3_params} \
             --param MASTER_PASSWORD=p \
             --param ADMIN_PASSWORD=p
