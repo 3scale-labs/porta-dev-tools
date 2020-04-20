@@ -218,6 +218,7 @@ module Porta
         opts.on(*command_options(:zync_image, 'Zync image to deploy'))
         opts.on(*command_options(:memcached_image, 'Memcached image to deploy'))
         opts.on(*command_options(:cluster_domain, 'Domain of the OpenShift cluster where to deploy Porta'))
+        opts.on(*command_options(:wildcard_domain, "Wildcard/termination domain for all external domains of the application (default: '<random-hash>.apps.<cluster_domain>')"))
         opts.on(*command_options(:registry_secret_file_path, 'Path to the Red Hat Registry secret file in the file system', '--secret-file-path=VALUE'))
         opts.on(*command_options(:apicast_policies_url, 'URL to a public APIcast policy registry'))
         opts.on(*command_options(:watch_deploy, 'Whether to watch status of the pods right after deploy', '--[no-]watch'))
