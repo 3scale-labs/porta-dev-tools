@@ -460,7 +460,8 @@ module Porta
             --param APICAST_REGISTRY_URL="#{options[:apicast_policies_url]}" \
             #{aws_s3_params} \
             --param MASTER_PASSWORD=p \
-            --param ADMIN_PASSWORD=p
+            --param ADMIN_PASSWORD=p \
+            --param ADMIN_ACCESS_TOKEN=secret
         CMD
       end
     end
