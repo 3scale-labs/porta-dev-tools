@@ -133,6 +133,8 @@ module Porta
 
   class SidekiqOptionParser < RailsEnvOptionParser; end
 
+  class PortaflyOptionParser < RailsEnvOptionParser; end
+
   class ResetOptionParser < RailsEnvOptionParser; end
 
   class AssetsOptionParser < RailsEnvOptionParser; end
@@ -264,6 +266,7 @@ module Porta
         Commands:
           server       Starts the Rails server locally
           sidekiq      Starts a Sidekiq worker locally
+          portafly     Starts Portafly
           reset        Resets Porta's databases (Redis and DBMS)
           assets       Removes node_modules and precompile assets again
           test         Bundle execs a Porta's Rails test file
@@ -298,18 +301,21 @@ module Porta
       }
     end
 
-    def exec_in_porta(envs = {}, &block)
-      run_in_porta do
+    def exec_in_porta(envs = {}, sub: nil, &block)
+      run_in_porta(sub: sub) do
         exec porta_common_envs.merge(envs), block.call
       end
     end
 
-    def run_in_porta(&block)
-      Dir.chdir(File.expand_path(options[:porta_dir]), &block)
+    def run_in_porta(sub: nil, &block)
+      dir = File.expand_path(options[:porta_dir])
+      dir = File.join(dir, sub) if sub
+      run_in_dir(dir, &block)
     end
 
     def run_in_3scale_operator(&block)
-      Dir.chdir(File.expand_path(options[:threescale_operator_dir]), &block)
+      dir = File.expand_path(options[:threescale_operator_dir])
+      run_in_dir(dir, &block)
     end
 
     def system(*args)
@@ -331,6 +337,11 @@ module Porta
       cmd = [envs.respond_to?(:map) ? envs.map { |(env, value)| [env, value].join('=') }.join(' ') : envs, *command_args]
       puts "[CMD] #{cmd.join(' ')}"
     end
+
+    def run_in_dir(dir, &block)
+      puts "[DIR] #{dir}"
+      Dir.chdir(dir, &block)
+    end
   end
 
   class ServerCommand < CommandRunner
@@ -342,6 +353,12 @@ module Porta
   class SidekiqCommand < CommandRunner
     def run
       exec_in_porta('RAILS_MAX_THREADS' => '5') { 'bundle exec rails sidekiq' }
+    end
+  end
+
+  class PortaflyCommand < CommandRunner
+    def run
+      exec_in_porta({ 'SKIP_PREFLIGHT_CHECK' => 'true', 'PORT' => '3003' }, sub: 'portafly') { 'yarn install && yarn start' }
     end
   end
 
