@@ -1,0 +1,886 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+message: Porta development environment dependencies now running on OpenShift
+metadata:
+  annotations:
+    description: Development environment dependencies of 3scale API Management Porta component
+    openshift.io/display-name: 3scale API Management Local Porta Dependencies
+    openshift.io/provider-display-name: Red Hat, Inc.
+    tags: integration, api management, 3scale
+  creationTimestamp: null
+  name: 3scale-porta-dev-dependencies
+objects:
+# Porxy
+- kind: ImageStream
+  apiVersion: image.openshift.io/v1
+  metadata:
+    annotations:
+      openshift.io/display-name: Porxy
+    creationTimestamp: null
+    name: porxy
+  spec:
+    lookupPolicy:
+      local: true
+    tags:
+    - annotations:
+        openshift.io/display-name: Porxy
+      from:
+        kind: DockerImage
+        name: quay.io/guicassolato/porxy:hyperkit
+      generation: null
+      importPolicy:
+        insecure: ${{IMAGESTREAM_TAG_IMPORT_INSECURE}}
+      name: master
+      referencePolicy:
+        type: ""
+  status:
+    dockerImageRepository: ""
+- kind: DeploymentConfig
+  apiVersion: apps.openshift.io/v1
+  metadata:
+    creationTimestamp: null
+    labels:
+      deploymentConfig: porxy
+    name: porxy
+  spec:
+    replicas: 1
+    selector:
+      deploymentConfig: porxy
+    strategy:
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 1800
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        creationTimestamp: null
+        labels:
+          deploymentConfig: porxy
+      spec:
+        containers:
+        - image: porxy:latest
+          imagePullPolicy: IfNotPresent
+          name: porxy
+          ports:
+          - containerPort: 3008
+            protocol: TCP
+          resources: {}
+    test: false
+    triggers:
+    - type: ConfigChange
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - porxy
+        from:
+          kind: ImageStreamTag
+          name: porxy:master
+      type: ImageChange
+  status:
+    availableReplicas: 0
+    latestVersion: 0
+    observedGeneration: 0
+    replicas: 0
+    unavailableReplicas: 0
+    updatedReplicas: 0
+- kind: Service
+  apiVersion: v1
+  metadata:
+    creationTimestamp: null
+    name: porxy
+  spec:
+    ports:
+    - name: http
+      port: 3008
+      protocol: TCP
+      targetPort: 3008
+    selector:
+      deploymentConfig: porxy
+  status:
+    loadBalancer: {}
+# APIcast
+- kind: ImageStream
+  apiVersion: image.openshift.io/v1
+  metadata:
+    annotations:
+      openshift.io/display-name: AMP APIcast
+    creationTimestamp: null
+    labels:
+      app: ${APP_LABEL}
+      threescale_component: apicast
+    name: amp-apicast
+  spec:
+    lookupPolicy:
+      local: false
+    tags:
+    - annotations:
+        openshift.io/display-name: AMP APIcast ${AMP_RELEASE}
+      from:
+        kind: DockerImage
+        name: ${AMP_APICAST_IMAGE}
+      generation: null
+      importPolicy:
+        insecure: ${{IMAGESTREAM_TAG_IMPORT_INSECURE}}
+      name: ${AMP_RELEASE}
+      referencePolicy:
+        type: ""
+  status:
+    dockerImageRepository: ""
+- kind: ConfigMap
+  apiVersion: v1
+  data:
+    APICAST_MANAGEMENT_API: ${APICAST_MANAGEMENT_API}
+    APICAST_RESPONSE_CODES: ${APICAST_RESPONSE_CODES}
+    OPENSSL_VERIFY: ${APICAST_OPENSSL_VERIFY}
+  metadata:
+    creationTimestamp: null
+    labels:
+      app: ${APP_LABEL}
+      threescale_component: apicast
+    name: apicast-environment
+- kind: Secret
+  apiVersion: v1
+  metadata:
+    creationTimestamp: null
+    labels:
+      app: ${APP_LABEL}
+      threescale_component: system
+    name: system-master-apicast
+  stringData:
+    ACCESS_TOKEN: ${APICAST_ACCESS_TOKEN}
+    PROXY_CONFIGS_ENDPOINT: http://${APICAST_ACCESS_TOKEN}@porxy:3008/master/api/proxy/configs
+  type: Opaque
+- kind: DeploymentConfig
+  apiVersion: apps.openshift.io/v1
+  metadata:
+    creationTimestamp: null
+    labels:
+      app: ${APP_LABEL}
+      threescale_component: apicast
+      threescale_component_element: staging
+    name: apicast-staging
+  spec:
+    replicas: 1
+    selector:
+      deploymentConfig: apicast-staging
+    strategy:
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 1800
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        annotations:
+          prometheus.io/port: "9421"
+          prometheus.io/scrape: "true"
+        creationTimestamp: null
+        labels:
+          app: ${APP_LABEL}
+          deploymentConfig: apicast-staging
+          threescale_component: apicast
+          threescale_component_element: staging
+      spec:
+        containers:
+        - env:
+          - name: THREESCALE_PORTAL_ENDPOINT
+            valueFrom:
+              secretKeyRef:
+                key: PROXY_CONFIGS_ENDPOINT
+                name: system-master-apicast
+          - name: BACKEND_ENDPOINT_OVERRIDE
+            valueFrom:
+              secretKeyRef:
+                key: service_endpoint
+                name: backend-listener
+          - name: APICAST_MANAGEMENT_API
+            valueFrom:
+              configMapKeyRef:
+                key: APICAST_MANAGEMENT_API
+                name: apicast-environment
+          - name: OPENSSL_VERIFY
+            valueFrom:
+              configMapKeyRef:
+                key: OPENSSL_VERIFY
+                name: apicast-environment
+          - name: APICAST_RESPONSE_CODES
+            valueFrom:
+              configMapKeyRef:
+                key: APICAST_RESPONSE_CODES
+                name: apicast-environment
+          - name: APICAST_CONFIGURATION_LOADER
+            value: lazy
+          - name: APICAST_CONFIGURATION_CACHE
+            value: "0"
+          - name: THREESCALE_DEPLOYMENT_ENV
+            value: staging
+          image: amp-apicast:latest
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            httpGet:
+              path: /status/live
+              port: 8090
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          name: apicast-staging
+          ports:
+          - containerPort: 8080
+            protocol: TCP
+          - containerPort: 8090
+            protocol: TCP
+          - containerPort: 9421
+            name: metrics
+            protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /status/ready
+              port: 8090
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+          resources: {}
+    test: false
+    triggers:
+    - type: ConfigChange
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - apicast-staging
+        from:
+          kind: ImageStreamTag
+          name: amp-apicast:${AMP_RELEASE}
+      type: ImageChange
+  status:
+    availableReplicas: 0
+    latestVersion: 0
+    observedGeneration: 0
+    replicas: 0
+    unavailableReplicas: 0
+    updatedReplicas: 0
+- kind: Service
+  apiVersion: v1
+  metadata:
+    creationTimestamp: null
+    labels:
+      app: ${APP_LABEL}
+      threescale_component: apicast
+      threescale_component_element: staging
+    name: apicast-staging
+  spec:
+    ports:
+    - name: gateway
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+    - name: management
+      port: 8090
+      protocol: TCP
+      targetPort: 8090
+    selector:
+      deploymentConfig: apicast-staging
+  status:
+    loadBalancer: {}
+# Apisonator
+- kind: ImageStream
+  apiVersion: image.openshift.io/v1
+  metadata:
+    annotations:
+      openshift.io/display-name: AMP backend
+    creationTimestamp: null
+    labels:
+      app: ${APP_LABEL}
+      threescale_component: backend
+    name: amp-backend
+  spec:
+    lookupPolicy:
+      local: false
+    tags:
+    - annotations:
+        openshift.io/display-name: amp-backend ${AMP_RELEASE}
+      from:
+        kind: DockerImage
+        name: ${AMP_BACKEND_IMAGE}
+      generation: null
+      importPolicy:
+        insecure: ${{IMAGESTREAM_TAG_IMPORT_INSECURE}}
+      name: ${AMP_RELEASE}
+      referencePolicy:
+        type: ""
+  status:
+    dockerImageRepository: ""
+- kind: ConfigMap
+  apiVersion: v1
+  data:
+    RACK_ENV: production
+  metadata:
+    creationTimestamp: null
+    labels:
+      app: ${APP_LABEL}
+      threescale_component: backend
+    name: backend-environment
+- kind: Secret
+  apiVersion: v1
+  metadata:
+    creationTimestamp: null
+    labels:
+      app: ${APP_LABEL}
+      threescale_component: backend
+    name: backend-internal-api
+  stringData:
+    password: ${SYSTEM_BACKEND_PASSWORD}
+    username: ${SYSTEM_BACKEND_USERNAME}
+  type: Opaque
+- kind: Secret
+  apiVersion: v1
+  metadata:
+    creationTimestamp: null
+    labels:
+      app: ${APP_LABEL}
+      threescale_component: backend
+    name: backend-redis
+  stringData:
+    REDIS_QUEUES_SENTINEL_HOSTS: ""
+    REDIS_QUEUES_SENTINEL_ROLE: ""
+    REDIS_QUEUES_URL: 192.168.64.1:6379/5
+    REDIS_STORAGE_SENTINEL_HOSTS: ""
+    REDIS_STORAGE_SENTINEL_ROLE: ""
+    REDIS_STORAGE_URL: 192.168.64.1:6379/6
+  type: Opaque
+- kind: Secret
+  apiVersion: v1
+  metadata:
+    creationTimestamp: null
+    labels:
+      app: ${APP_LABEL}
+      threescale_component: backend
+    name: backend-listener
+  stringData:
+    route_endpoint: https://backend-${TENANT_NAME}.${WILDCARD_DOMAIN}
+    service_endpoint: http://backend-listener:3001
+  type: Opaque
+- kind: DeploymentConfig
+  apiVersion: apps.openshift.io/v1
+  metadata:
+    creationTimestamp: null
+    labels:
+      app: ${APP_LABEL}
+      threescale_component: backend
+      threescale_component_element: cron
+    name: backend-cron
+  spec:
+    replicas: 1
+    selector:
+      deploymentConfig: backend-cron
+    strategy:
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 1200
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        creationTimestamp: null
+        labels:
+          app: ${APP_LABEL}
+          deploymentConfig: backend-cron
+          threescale_component: backend
+          threescale_component_element: cron
+      spec:
+        containers:
+        - args:
+          - backend-cron
+          env:
+          - name: CONFIG_REDIS_PROXY
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_STORAGE_URL
+                name: backend-redis
+          - name: CONFIG_REDIS_SENTINEL_HOSTS
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_STORAGE_SENTINEL_HOSTS
+                name: backend-redis
+          - name: CONFIG_REDIS_SENTINEL_ROLE
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_STORAGE_SENTINEL_ROLE
+                name: backend-redis
+          - name: CONFIG_QUEUES_MASTER_NAME
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_QUEUES_URL
+                name: backend-redis
+          - name: CONFIG_QUEUES_SENTINEL_HOSTS
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_QUEUES_SENTINEL_HOSTS
+                name: backend-redis
+          - name: CONFIG_QUEUES_SENTINEL_ROLE
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_QUEUES_SENTINEL_ROLE
+                name: backend-redis
+          - name: RACK_ENV
+            valueFrom:
+              configMapKeyRef:
+                key: RACK_ENV
+                name: backend-environment
+          image: amp-backend:latest
+          imagePullPolicy: IfNotPresent
+          name: backend-cron
+          resources: {}
+        initContainers:
+        - command:
+          - /opt/app/entrypoint.sh
+          - sh
+          - -c
+          - until rake connectivity:redis_storage_queue_check; do sleep $SLEEP_SECONDS;
+            done
+          env:
+          - name: CONFIG_REDIS_PROXY
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_STORAGE_URL
+                name: backend-redis
+          - name: CONFIG_REDIS_SENTINEL_HOSTS
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_STORAGE_SENTINEL_HOSTS
+                name: backend-redis
+          - name: CONFIG_REDIS_SENTINEL_ROLE
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_STORAGE_SENTINEL_ROLE
+                name: backend-redis
+          - name: CONFIG_QUEUES_MASTER_NAME
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_QUEUES_URL
+                name: backend-redis
+          - name: CONFIG_QUEUES_SENTINEL_HOSTS
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_QUEUES_SENTINEL_HOSTS
+                name: backend-redis
+          - name: CONFIG_QUEUES_SENTINEL_ROLE
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_QUEUES_SENTINEL_ROLE
+                name: backend-redis
+          - name: RACK_ENV
+            valueFrom:
+              configMapKeyRef:
+                key: RACK_ENV
+                name: backend-environment
+          - name: SLEEP_SECONDS
+            value: "1"
+          image: amp-backend:latest
+          name: backend-redis-svc
+          resources: {}
+    test: false
+    triggers:
+    - type: ConfigChange
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - backend-redis-svc
+        - backend-cron
+        from:
+          kind: ImageStreamTag
+          name: amp-backend:${AMP_RELEASE}
+      type: ImageChange
+  status:
+    availableReplicas: 0
+    latestVersion: 0
+    observedGeneration: 0
+    replicas: 0
+    unavailableReplicas: 0
+    updatedReplicas: 0
+- kind: DeploymentConfig
+  apiVersion: apps.openshift.io/v1
+  metadata:
+    creationTimestamp: null
+    labels:
+      app: ${APP_LABEL}
+      threescale_component: backend
+      threescale_component_element: listener
+    name: backend-listener
+  spec:
+    replicas: 1
+    selector:
+      deploymentConfig: backend-listener
+    strategy:
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 600
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        creationTimestamp: null
+        labels:
+          app: ${APP_LABEL}
+          deploymentConfig: backend-listener
+          threescale_component: backend
+          threescale_component_element: listener
+      spec:
+        containers:
+        - args:
+          - bin/3scale_backend
+          - start
+          - -e
+          - production
+          - -p
+          - "3001"
+          - -x
+          - /dev/stdout
+          env:
+          - name: CONFIG_REDIS_PROXY
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_STORAGE_URL
+                name: backend-redis
+          - name: CONFIG_REDIS_SENTINEL_HOSTS
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_STORAGE_SENTINEL_HOSTS
+                name: backend-redis
+          - name: CONFIG_REDIS_SENTINEL_ROLE
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_STORAGE_SENTINEL_ROLE
+                name: backend-redis
+          - name: CONFIG_QUEUES_MASTER_NAME
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_QUEUES_URL
+                name: backend-redis
+          - name: CONFIG_QUEUES_SENTINEL_HOSTS
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_QUEUES_SENTINEL_HOSTS
+                name: backend-redis
+          - name: CONFIG_QUEUES_SENTINEL_ROLE
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_QUEUES_SENTINEL_ROLE
+                name: backend-redis
+          - name: RACK_ENV
+            valueFrom:
+              configMapKeyRef:
+                key: RACK_ENV
+                name: backend-environment
+          - name: PUMA_WORKERS
+            value: "16"
+          - name: CONFIG_INTERNAL_API_USER
+            valueFrom:
+              secretKeyRef:
+                key: username
+                name: backend-internal-api
+          - name: CONFIG_INTERNAL_API_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: password
+                name: backend-internal-api
+          image: amp-backend:latest
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            tcpSocket:
+              port: 3001
+          name: backend-listener
+          ports:
+          - containerPort: 3001
+            protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: 3001
+            initialDelaySeconds: 30
+            timeoutSeconds: 5
+          resources: {}
+    test: false
+    triggers:
+    - type: ConfigChange
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - backend-listener
+        from:
+          kind: ImageStreamTag
+          name: amp-backend:${AMP_RELEASE}
+      type: ImageChange
+  status:
+    availableReplicas: 0
+    latestVersion: 0
+    observedGeneration: 0
+    replicas: 0
+    unavailableReplicas: 0
+    updatedReplicas: 0
+- kind: DeploymentConfig
+  apiVersion: apps.openshift.io/v1
+  metadata:
+    creationTimestamp: null
+    labels:
+      app: ${APP_LABEL}
+      threescale_component: backend
+      threescale_component_element: worker
+    name: backend-worker
+  spec:
+    replicas: 1
+    selector:
+      deploymentConfig: backend-worker
+    strategy:
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 1200
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        creationTimestamp: null
+        labels:
+          app: ${APP_LABEL}
+          deploymentConfig: backend-worker
+          threescale_component: backend
+          threescale_component_element: worker
+      spec:
+        containers:
+        - args:
+          - bin/3scale_backend_worker
+          - run
+          env:
+          - name: CONFIG_REDIS_PROXY
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_STORAGE_URL
+                name: backend-redis
+          - name: CONFIG_REDIS_SENTINEL_HOSTS
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_STORAGE_SENTINEL_HOSTS
+                name: backend-redis
+          - name: CONFIG_REDIS_SENTINEL_ROLE
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_STORAGE_SENTINEL_ROLE
+                name: backend-redis
+          - name: CONFIG_QUEUES_MASTER_NAME
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_QUEUES_URL
+                name: backend-redis
+          - name: CONFIG_QUEUES_SENTINEL_HOSTS
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_QUEUES_SENTINEL_HOSTS
+                name: backend-redis
+          - name: CONFIG_QUEUES_SENTINEL_ROLE
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_QUEUES_SENTINEL_ROLE
+                name: backend-redis
+          - name: RACK_ENV
+            valueFrom:
+              configMapKeyRef:
+                key: RACK_ENV
+                name: backend-environment
+          image: amp-backend:latest
+          imagePullPolicy: IfNotPresent
+          name: backend-worker
+          resources: {}
+        initContainers:
+        - command:
+          - /opt/app/entrypoint.sh
+          - sh
+          - -c
+          - until rake connectivity:redis_storage_queue_check; do sleep $SLEEP_SECONDS;
+            done
+          env:
+          - name: CONFIG_REDIS_PROXY
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_STORAGE_URL
+                name: backend-redis
+          - name: CONFIG_REDIS_SENTINEL_HOSTS
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_STORAGE_SENTINEL_HOSTS
+                name: backend-redis
+          - name: CONFIG_REDIS_SENTINEL_ROLE
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_STORAGE_SENTINEL_ROLE
+                name: backend-redis
+          - name: CONFIG_QUEUES_MASTER_NAME
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_QUEUES_URL
+                name: backend-redis
+          - name: CONFIG_QUEUES_SENTINEL_HOSTS
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_QUEUES_SENTINEL_HOSTS
+                name: backend-redis
+          - name: CONFIG_QUEUES_SENTINEL_ROLE
+            valueFrom:
+              secretKeyRef:
+                key: REDIS_QUEUES_SENTINEL_ROLE
+                name: backend-redis
+          - name: RACK_ENV
+            valueFrom:
+              configMapKeyRef:
+                key: RACK_ENV
+                name: backend-environment
+          - name: SLEEP_SECONDS
+            value: "1"
+          image: amp-backend:latest
+          name: backend-redis-svc
+          resources: {}
+    test: false
+    triggers:
+    - type: ConfigChange
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - backend-redis-svc
+        - backend-worker
+        from:
+          kind: ImageStreamTag
+          name: amp-backend:${AMP_RELEASE}
+      type: ImageChange
+  status:
+    availableReplicas: 0
+    latestVersion: 0
+    observedGeneration: 0
+    replicas: 0
+    unavailableReplicas: 0
+    updatedReplicas: 0
+- kind: Service
+  apiVersion: v1
+  metadata:
+    creationTimestamp: null
+    labels:
+      app: ${APP_LABEL}
+      threescale_component: backend
+      threescale_component_element: listener
+    name: backend-listener
+  spec:
+    ports:
+    - name: http
+      port: 3001
+      protocol: TCP
+      targetPort: 3001
+    selector:
+      deploymentConfig: backend-listener
+  status:
+    loadBalancer: {}
+- kind: Route
+  apiVersion: route.openshift.io/v1
+  metadata:
+    creationTimestamp: null
+    labels:
+      app: ${APP_LABEL}
+      threescale_component: backend
+    name: backend
+  spec:
+    host: backend-${TENANT_NAME}.${WILDCARD_DOMAIN}
+    port:
+      targetPort: http
+    tls:
+      insecureEdgeTerminationPolicy: Allow
+      termination: edge
+    to:
+      kind: Service
+      name: backend-listener
+      weight: null
+  status:
+    ingress: null
+# - kind: "Service"
+#   apiVersion: "v1"
+#   metadata:
+#     name: "external-redis"
+#   spec:
+#     ports:
+#     - name: "redis"
+#       protocol: "TCP"
+#       port: 6379
+#       targetPort: 6379
+#       nodePort: 0
+#   selector: {}
+# - kind: "Endpoints"
+#   apiVersion: "v1"
+#   metadata:
+#     name: "external-redis"
+#   subsets:
+#     - addresses:
+#       - ip: "192.168.64.1"
+#       ports:
+#       - name: "redis"
+#         port: 6379
+parameters:
+- name: AMP_RELEASE
+  description: AMP release tag.
+  required: true
+  value: master
+- name: APP_LABEL
+  description: Used for object app labels
+  required: true
+  value: 3scale-porta-dev-dependencies
+- name: TENANT_NAME
+  description: Tenant name under the root that Admin UI will be available with -admin suffix.
+  required: true
+  value: 3scale
+- name: AMP_BACKEND_IMAGE
+  required: true
+  value: quay.io/3scale/apisonator:nightly
+- name: AMP_APICAST_IMAGE
+  required: true
+  value: quay.io/3scale/apicast:nightly
+- name: IMAGESTREAM_TAG_IMPORT_INSECURE
+  description: Set to true if the server may bypass certificate verification or connect directly over HTTP during image import.
+  required: true
+  value: "false"
+- name: WILDCARD_DOMAIN
+  description: Root domain for the wildcard routes. Eg. example.com will generate 3scale-admin.example.com.
+  required: true
+  value: example.com.local
+- name: SYSTEM_BACKEND_USERNAME
+  description: Internal 3scale API username for internal 3scale api auth.
+  required: true
+  value: system_app
+- name: SYSTEM_BACKEND_PASSWORD
+  description: Internal 3scale API password for internal 3scale api auth.
+  required: true
+  value: password
+- name: APICAST_ACCESS_TOKEN
+  description: Read Only Access Token that is APIcast going to use to download its configuration.
+  required: true
+  value: apicastsecret
+- name: APICAST_MANAGEMENT_API
+  description: Scope of the APIcast Management API. Can be disabled, status or debug. At least status required for health checks.
+  value: status
+- name: APICAST_OPENSSL_VERIFY
+  description: Turn on/off the OpenSSL peer verification when downloading the configuration. Can be set to true/false.
+  value: "false"
+- name: APICAST_RESPONSE_CODES
+  description: Enable logging response codes in APIcast.
+  value: "true"
