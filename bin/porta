@@ -364,7 +364,7 @@ module Porta
 
   class ResetCommand < CommandRunner
     def run
-      system('redis-cli flushall') && exec_in_porta { "bundle exec rails db:reset MASTER_PASSWORD=p USER_PASSWORD=p APICAST_ACCESS_TOKEN=#{options[:apicast_secret]}" }
+      system('redis-cli flushall') && exec_in_porta { "bundle exec rails db:reset MASTER_PASSWORD=p USER_PASSWORD=p ADMIN_ACCESS_TOKEN=secret APICAST_ACCESS_TOKEN=#{options[:apicast_secret]}" }
     end
   end
 
