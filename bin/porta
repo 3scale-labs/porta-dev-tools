@@ -164,6 +164,7 @@ module Porta
   class DepsOptionParser < CommandOptionParser
     def initialize
       super do |opts|
+        opts.on(*command_options(:deps_down, 'Stops porta dependencies running in docker', '--down'))
         opts.on(*command_options(:apisonator_image, 'Apisonator image to launch in a docker'))
         opts.on(*command_options(:apicast_image, 'APIcast image to launch in a docker'))
         opts.on(*command_options(:porxy_image, 'Porxy image to launch in a docker'))
@@ -394,6 +395,8 @@ module Porta
 
   class DepsCommand < CommandRunner
     def run
+      return stop_deps if options[:deps_down]
+
       # TODO: Add Zync
       run_apisonator && run_porxy && run_apicast
     end
@@ -418,6 +421,10 @@ module Porta
 
     def run_apicast
       system("docker run -d --name apicast --rm -p 8080:8080 -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_secret]}@host.docker.internal:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://host.docker.internal:3001\" #{options[:apicast_image]}")
+    end
+
+    def stop_deps
+      %w[apicast porxy apisonator_worker apisonator].each { |component| system("docker stop #{component}") }
     end
   end
 
