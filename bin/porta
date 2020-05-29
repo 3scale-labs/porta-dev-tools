@@ -29,7 +29,6 @@ module Porta
     aws_region: nil,
     apicast_secret: 'apicastsecret',
     apicast_policies_url: 'https://apicast-staging.proda.3sca.net/policies',
-    dev_gtld: 'local',
     watch_deploy: false,
     verbose: false,
     explain: false
@@ -123,7 +122,6 @@ module Porta
     def initialize
       super do |opts|
         yield(opts) if block_given?
-        opts.on(*command_options(:dev_gtld, 'Generic top level domain name (gTLD) for Porta domains'))
         opts.on(*command_options(:apicast_policies_url, 'URL to a public APIcast policy registry'))
       end
     end
@@ -296,7 +294,6 @@ module Porta
 
     def porta_common_envs
       {
-        'DEV_GTLD' => options[:dev_gtld],
         'APICAST_REGISTRY_URL' => options[:apicast_policies_url]
       }
     end

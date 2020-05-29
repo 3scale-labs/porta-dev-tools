@@ -12,8 +12,8 @@ A Redis instance is expected to be running locally and attending to port 6379, a
 
 If you are using dnsmasq, make sure to include the following two DNS records:
 
-```
-address=/example.com.local/127.0.0.1
+```conf
+address=/.3scale.localhost/127.0.0.1
 address=/staging.apicast.dev/127.0.0.1
 ```
 
@@ -31,14 +31,38 @@ Consider the following general parameters for the [Setup](#setup) and [Run](#run
 ## Setup
 
 ### Reset 3scale/porta databases
-```
+```shell
 redis-cli flushall && bundle exec rails db:reset MASTER_PASSWORD=p USER_PASSWORD=p DEV_GTLD=local APICAST_ACCESS_TOKEN=<APICAST_ACCESS_TOKEN>
+```
+
+### Configure 3scale/porta domain substitution
+```yaml
+# config/domain_substitution.yml
+default: &default
+  enabled: false
+  request_pattern: "\\.3scale\\.localhost"
+  request_replacement: ".example.com"
+  response_pattern: "\\.example\\.com"
+  response_replacement: ".3scale.localhost"
+
+development:
+  <<: *default
+  enabled: true
+
+test:
+  <<: *default
+
+production:
+  <<: *default
+
+preview:
+  <<: *default
 ```
 
 ### Env file for 3scale/apisonator
 Prepare an env file for 3scale/apisonator:
 
-```
+```shell
 echo "CONFIG_QUEUES_MASTER_NAME=host.docker.internal:6379/5\n\
 CONFIG_REDIS_PROXY=host.docker.internal:6379/6\n\
 CONFIG_INTERNAL_API_USER=system_app\n\
