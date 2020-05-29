@@ -67,6 +67,7 @@ porta CMD [options]
 | ---------|---------------------------------------------------------------------------------------|
 | server   | Starts the Rails server locally                                                       |
 | sidekiq  | Starts a Sidekiq worker locally                                                       |
+| sphinx   | Starts Sphinx locally                                                                 |
 | portafly | Starts Portafly                                                                       |
 | reset    | Resets Porta's databases (Redis and DBMS)                                             |
 | assets   | Removes node_modules and precompile assets again                                      |
@@ -102,9 +103,10 @@ The following options are available with all commands:
 ```shell
 porta reset
 porta deps
-porta sidekiq  # hijacks the shell
+porta sphinx   # holds the shell
+porta sidekiq  # holds the shell
 porta sync
-porta server   # hijacks the shell
+porta server   # holds the shell
 ```
 
 ### Workflow to build and deploy porta to OCP
