@@ -7,6 +7,7 @@ require 'yaml'
 module Porta
   DEFAULTS_OPTIONS = {
     porta_dir: '~/workspace/porta',
+    zync_dir: '~/workspace/zync',
     branch: nil,
     project: nil,
     quay_repo: 'quay.io/3scale/porta',
@@ -129,9 +130,15 @@ module Porta
 
   class ServerOptionParser < RailsEnvOptionParser; end
 
-  class SidekiqOptionParser < RailsEnvOptionParser; end
-
-  class SphinxOptionParser < RailsEnvOptionParser; end
+  class SidekiqOptionParser < RailsEnvOptionParser
+    def initialize
+      super do |opts|
+        opts.on(*command_options(:concurrency, 'Number of threads (default: 2)'))
+        opts.on(*command_options(:queues, 'Sidekiq queues to enable (comma-separated)'))
+        opts.on(*command_options(:except_queues, 'Sidekiq queues to disable (comma-separated)'))
+      end
+    end
+  end
 
   class PortaflyOptionParser < RailsEnvOptionParser; end
 
@@ -173,7 +180,7 @@ module Porta
     end
   end
 
-  class SyncOptionParser < RailsEnvOptionParser; end
+  class ResyncOptionParser < RailsEnvOptionParser; end
 
   class BuildOptionParser < CommandOptionParser; end
 
@@ -267,14 +274,13 @@ module Porta
         Commands:
           server       Starts the Rails server locally
           sidekiq      Starts a Sidekiq worker locally
-          sphinx       Starts Sphinx locally
           portafly     Starts Portafly
           reset        Resets Porta's databases (Redis and DBMS)
           assets       Removes node_modules and precompile assets again
           test         Bundle execs a Porta's Rails test file
           cuke         Bundle execs a Porta's Cucumber test file
-          deps         Runs (in docker) components that Porta depends upon – Apisonator, APIcast and porxy
-          sync         Resyncs Porta with Apisonator (Sidekiq and Apisonator must both be running)
+          deps         Runs components that Porta depends upon – (in docker) Apisonator, APIcast and porxy; (damonized) Zync and Sphinx
+          resync       Resyncs Porta with Apisonator (Sidekiq and Apisonator must both be running)
           build        Builds Porta for OpenShift
           push         Pushes latest `system-os` docker image to quay.io
           deploy       Deploys 3scale to an OpenShift devel cluster, fetching images from quay.io
@@ -314,6 +320,22 @@ module Porta
       run_in_dir(dir, &block)
     end
 
+    def zync_common_envs
+      {}
+    end
+
+    def exec_in_zync(envs = {}, sub: nil, &block)
+      run_in_zync(sub: sub) do
+        exec zync_common_envs.merge(envs), block.call
+      end
+    end
+
+    def run_in_zync(sub: nil, &block)
+      dir = File.expand_path(options[:zync_dir])
+      dir = File.join(dir, sub) if sub
+      run_in_dir(dir, &block)
+    end
+
     def run_in_3scale_operator(&block)
       dir = File.expand_path(options[:threescale_operator_dir])
       run_in_dir(dir, &block)
@@ -340,7 +362,7 @@ module Porta
     end
 
     def run_in_dir(dir, &block)
-      puts "[DIR] #{dir}"
+      puts "[DIR] #{dir}" if options[:verbose]
       Dir.chdir(dir, &block)
     end
   end
@@ -352,14 +374,33 @@ module Porta
   end
 
   class SidekiqCommand < CommandRunner
-    def run
-      exec_in_porta('RAILS_MAX_THREADS' => '5') { 'bundle exec rails sidekiq' }
-    end
-  end
+    QUEUES = %w[backend_sync billing critical default deletion events low priority web_hooks zync].freeze
 
-  class SphinxCommand < CommandRunner
     def run
-      exec_in_porta { 'bundle exec rake openshift:thinking_sphinx:start' }
+      queues_arg = queues.map { |queue| "--queue #{queue}" }
+      exec_in_porta { "bundle exec sidekiq #{queues_arg.join(' ')} -c #{concurrency}" }
+    end
+
+    protected
+
+    def concurrency
+      options[:concurrency] || 2
+    end
+
+    def queues
+      active_queues - except_queues
+    end
+
+    def active_queues
+      only_queues.any? ? only_queues : QUEUES
+    end
+
+    def except_queues
+      options[:except_queues]&.split(',') || []
+    end
+
+    def only_queues
+      options[:queues]&.split(',') || []
     end
   end
 
@@ -397,8 +438,7 @@ module Porta
     def run
       return stop_deps if options[:deps_down]
 
-      # TODO: Add Zync
-      run_apisonator && run_porxy && run_apicast
+      run_apisonator && run_porxy && run_apicast && run_sphinx && run_zync
     end
 
     protected
@@ -408,27 +448,88 @@ module Porta
     end
 
     def run_apisonator_listener
-      system("docker run -d --name apisonator --rm -p 3001:3001 --env-file #{options[:apisonator_env_file]} -it #{options[:apisonator_image]} 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log")
+      system("docker run -d --name apisonator --rm -p 3001:3001 --env-file #{options[:apisonator_env_file]} -it #{options[:apisonator_image]} 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log >/dev/null && echo \"apisonator\"")
     end
 
     def run_apisonator_worker
-      system("docker run -d --name apisonator_worker --rm --env-file #{options[:apisonator_env_file]} -it #{options[:apisonator_image]} 3scale_backend_worker run")
+      system("docker run -d --name apisonator_worker --rm --env-file #{options[:apisonator_env_file]} -it #{options[:apisonator_image]} 3scale_backend_worker run >/dev/null && echo \"apisonator_worker\"")
     end
 
     def run_porxy
-      system("docker run -d --name porxy --rm -p 3008:3008 #{options[:porxy_image]}")
+      system("docker run -d --name porxy --rm -p 3008:3008 #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
     end
 
     def run_apicast
-      system("docker run -d --name apicast --rm -p 8080:8080 -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_secret]}@host.docker.internal:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://host.docker.internal:3001\" #{options[:apicast_image]}")
+      system("docker run -d --name apicast --rm -p 8080:8080 -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_secret]}@host.docker.internal:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://host.docker.internal:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
+    end
+
+    def run_sphinx
+      return if sphinx_running?
+      run_in_porta { system("bundle exec rake ts:stop ts:configure ts:start &>#{options[:porta_dir]}/log/development.searchd.log && echo sphinx") }
+    end
+
+    def run_zync
+      return true unless zync_installed?
+      run_zync_puma && run_zync_que
+    end
+
+    def run_zync_puma
+      run_in_zync { system("bundle exec rails server -p 5000 &>#{options[:zync_dir]}/log/development.log & echo zync") }
+    end
+
+    def run_zync_que
+      run_in_zync { system("PROMETHEUS_EXPORTER_PORT=9395 bundle exec rake que &>#{options[:zync_dir]}/log/development.log & echo que") }
     end
 
     def stop_deps
-      %w[apicast porxy apisonator_worker apisonator].each { |component| system("docker stop #{component}") }
+      stop_docker_deps
+      stop_sphinx
+      stop_zync
+    end
+
+    def stop_docker_deps
+      %w[apicast porxy apisonator_worker apisonator].each { |component| system("docker stop #{component} 2>/dev/null || echo \"#{component}\"") }
+    end
+
+    def stop_sphinx
+      return puts 'sphinx' unless sphinx_running?
+      run_in_porta { system('bundle exec rake ts:stop &>/dev/null && echo sphinx') }
+    end
+
+    def stop_zync
+      return true unless zync_installed?
+      stop_zync_puma
+      stop_zync_que
+    end
+
+    def stop_zync_puma
+      return puts 'zync' unless zync_puma_running?
+      system("ps ax | grep -v grep | grep puma | grep zync | awk '{ print $1 }' | xargs kill -9 && echo zync")
+    end
+
+    def stop_zync_que
+      return puts 'que' unless zync_que_running?
+      system("ps ax | grep -v grep | grep 'bin/que' | awk '{ print $1 }' | xargs kill -9 && echo que")
+    end
+
+    def sphinx_running?
+      `ps ax | grep -v grep | grep -c searchd`.chomp.to_i > 0
+    end
+
+    def zync_puma_running?
+      `ps ax | grep -v grep | grep puma | grep -c zync`.chomp.to_i > 0
+    end
+
+    def zync_que_running?
+      `ps ax | grep -v grep | grep puma | grep -c zync`.chomp.to_i > 0
+    end
+
+    def zync_installed?
+      Dir.exist?(options[:zync_dir])
     end
   end
 
-  class SyncCommand < CommandRunner
+  class ResyncCommand < CommandRunner
     def run
       exec_in_porta { 'rake backend:storage:enqueue_rewrite' }
     end
@@ -491,7 +592,8 @@ module Porta
             #{aws_s3_params} \
             --param MASTER_PASSWORD=p \
             --param ADMIN_PASSWORD=p \
-            --param ADMIN_ACCESS_TOKEN=secret
+            --param ADMIN_ACCESS_TOKEN=secret \
+            --param APICAST_ACCESS_TOKEN="#{options[:apicast_secret]}"
         CMD
       end
     end
