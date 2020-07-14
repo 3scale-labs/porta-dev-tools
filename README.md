@@ -72,7 +72,7 @@ porta CMD [options]
 | assets   | Removes node_modules and precompile assets again                                                                  |
 | test     | Bundle execs a Porta's Rails test file                                                                            |
 | cuke     | Bundle execs a Porta's Cucumber test file                                                                         |
-| deps     | Runs components that Porta depends upon – (in docker) Apisonator, APIcast and porxy; (damonized) Zync and Sphinx  |
+| deps     | Runs components that Porta depends upon – (in docker) Apisonator, APIcast and porxy; (daemonized) Zync and Sphinx |
 | resync   | Resyncs Porta with Apisonator (Sidekiq and Apisonator must both be running)                                       |
 | build    | Builds Porta for OpenShift                                                                                        |
 | push     | Pushes latest `system-os` docker image to quay.io                                                                 |
