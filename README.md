@@ -63,22 +63,21 @@ porta CMD [options]
 
 ### Supported commands
 
-| Command  | Description                                                                           |
-| ---------|---------------------------------------------------------------------------------------|
-| server   | Starts the Rails server locally                                                       |
-| sidekiq  | Starts a Sidekiq worker locally                                                       |
-| sphinx   | Starts Sphinx locally                                                                 |
-| portafly | Starts Portafly                                                                       |
-| reset    | Resets Porta's databases (Redis and DBMS)                                             |
-| assets   | Removes node_modules and precompile assets again                                      |
-| test     | Bundle execs a Porta's Rails test file                                                |
-| cuke     | Bundle execs a Porta's Cucumber test file                                             |
-| deps     | Runs (in docker) components that Porta depends upon – Apisonator, APIcast and porxy   |
-| sync     | Resyncs Porta with Apisonator (Sidekiq and Apisonator must both be running)           |
-| build    | Builds Porta for OpenShift                                                            |
-| push     | Pushes latest `system-os` docker image to quay.io                                     |
-| deploy   | Deploys 3scale to an OpenShift devel cluster, fetching images from quay.io            |
-| help     | Prints the list of available commands                                                 |
+| Command  | Description                                                                                                       |
+| ---------|-------------------------------------------------------------------------------------------------------------------|
+| server   | Starts the Rails server locally                                                                                   |
+| sidekiq  | Starts a Sidekiq worker locally                                                                                   |
+| portafly | Starts Portafly                                                                                                   |
+| reset    | Resets Porta's databases (Redis and DBMS)                                                                         |
+| assets   | Removes node_modules and precompile assets again                                                                  |
+| test     | Bundle execs a Porta's Rails test file                                                                            |
+| cuke     | Bundle execs a Porta's Cucumber test file                                                                         |
+| deps     | Runs components that Porta depends upon – (in docker) Apisonator, APIcast and porxy; (damonized) Zync and Sphinx  |
+| resync   | Resyncs Porta with Apisonator (Sidekiq and Apisonator must both be running)                                       |
+| build    | Builds Porta for OpenShift                                                                                        |
+| push     | Pushes latest `system-os` docker image to quay.io                                                                 |
+| deploy   | Deploys 3scale to an OpenShift devel cluster, fetching images from quay.io                                        |
+| help     | Prints the list of available commands                                                                             |
 
 You can get a full list of the supported commands by running:
 
@@ -103,10 +102,9 @@ The following options are available with all commands:
 ```shell
 porta reset
 porta deps
-porta sphinx   # holds the shell
-porta sidekiq  # holds the shell
-porta sync
-porta server   # holds the shell
+porta sidekiq  # hijacks the shell
+porta resync
+porta server   # hijacks the shell
 ```
 
 ### Workflow to build and deploy porta to OCP
