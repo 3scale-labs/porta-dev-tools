@@ -176,6 +176,7 @@ module Porta
         opts.on(*command_options(:apicast_image, 'APIcast image to launch in a docker'))
         opts.on(*command_options(:porxy_image, 'Porxy image to launch in a docker'))
         opts.on(*command_options(:apisonator_env_file, "Path to Apisonator's environment variables file in the file system"))
+        opts.on(*command_options(:zync_dir, 'Path to the Zync directory in the file system'))
       end
     end
   end
@@ -525,7 +526,7 @@ module Porta
     end
 
     def zync_installed?
-      Dir.exist?(options[:zync_dir])
+      Dir.exist?(File.expand_path(options[:zync_dir]))
     end
   end
 
