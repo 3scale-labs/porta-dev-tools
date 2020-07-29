@@ -1,0 +1,10 @@
+kind: Secret
+apiVersion: v1
+metadata:
+  creationTimestamp: null
+  name: system-seed
+stringData:
+  MASTER_PASSWORD: ${MASTER_PASSWORD}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+  ADMIN_ACCESS_TOKEN: ${ADMIN_ACCESS_TOKEN}
+type: Opaque

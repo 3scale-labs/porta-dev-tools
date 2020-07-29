@@ -3,6 +3,7 @@
 require 'optparse'
 require 'digest/sha1'
 require 'yaml'
+require 'shellwords'
 
 module Porta
   DEFAULTS_OPTIONS = {
@@ -24,12 +25,16 @@ module Porta
     wildcard_domain: nil,
     cluster_domain: nil,
     registry_secret_file_path: nil,
+    operator_channel: nil,
     aws_access_key: nil,
     aws_secret_access_key: nil,
     aws_bucket: nil,
     aws_region: nil,
+    master_password: 'p',
+    admin_password: 'p',
+    admin_access_token: 'secret',
     apicast_secret: 'apicastsecret',
-    apicast_policies_url: 'https://apicast-staging.proda.3sca.net/policies',
+    apicast_registry_url: 'https://apicast-staging.proda.3sca.net/policies',
     porta_local_provider_api: 'http://provider-admin.3scale.lvh.me:3000',
     watch_deploy: false,
     verbose: false,
@@ -124,7 +129,7 @@ module Porta
     def initialize
       super do |opts|
         yield(opts) if block_given?
-        opts.on(*command_options(:apicast_policies_url, 'URL to a public APIcast policy registry'))
+        opts.on(*command_options(:apicast_registry_url, 'URL to a public APIcast policy registry'))
       end
     end
   end
@@ -223,6 +228,8 @@ module Porta
     def initialize
       super do |opts|
         opts.on(*command_options(:threescale_operator_dir, 'Path to the 3scale-operator directory in the file system', '--operator-dir=VALUE'))
+        opts.on(*command_options(:deploy_with_operator, "Deploys using the 3scale operator", '--with-operator'))
+        opts.on(*command_options(:operator_channel, "3scale operator channel"))
         opts.on(*command_options(:openshift_template, "OpenShift template file – no need to include '.yml' in the end"))
         opts.on(*command_options(:project, 'Name of the OpenShift project (defaults to the name of the current branch of the Porta repo)'))
         opts.on(*command_options(:porta_image, "Porta image to deploy (default: '#{options[:quay_repo]}:porta-<project>')"))
@@ -233,7 +240,7 @@ module Porta
         opts.on(*command_options(:cluster_domain, 'Domain of the OpenShift cluster where to deploy Porta'))
         opts.on(*command_options(:wildcard_domain, "Wildcard/termination domain for all external domains of the application (default: '<random-hash>.apps.<cluster_domain>')"))
         opts.on(*command_options(:registry_secret_file_path, 'Path to the Red Hat Registry secret file in the file system', '--secret-file-path=VALUE'))
-        opts.on(*command_options(:apicast_policies_url, 'URL to a public APIcast policy registry'))
+        opts.on(*command_options(:apicast_registry_url, 'URL to a public APIcast policy registry'))
         opts.on(*command_options(:watch_deploy, 'Whether to watch status of the pods right after deploy', '--[no-]watch'))
       end
     end
@@ -307,7 +314,7 @@ module Porta
 
     def porta_common_envs
       {
-        'APICAST_REGISTRY_URL' => options[:apicast_policies_url]
+        'APICAST_REGISTRY_URL' => options[:apicast_registry_url]
       }
     end
 
@@ -420,7 +427,7 @@ module Porta
 
   class ResetCommand < CommandRunner
     def run
-      system('redis-cli flushall') && exec_in_porta { "bundle exec rails db:reset MASTER_PASSWORD=p USER_PASSWORD=p ADMIN_ACCESS_TOKEN=secret APICAST_ACCESS_TOKEN=#{options[:apicast_secret]}" }
+      system('redis-cli flushall') && exec_in_porta { "bundle exec rails db:reset MASTER_PASSWORD=#{options[:master_password]} USER_PASSWORD=#{options[:admin_password]} ADMIN_ACCESS_TOKEN=#{options[:admin_access_token]} APICAST_ACCESS_TOKEN=#{options[:apicast_secret]}" }
     end
   end
 
@@ -580,7 +587,7 @@ module Porta
 
   class DeployCommand < CommandRunner
     def run
-      return unless openshift_login && openshift_new_project && upload_registry_secret && openshift_new_app
+      return unless openshift_login && openshift_new_project && upload_registry_secret && openshift_deploy
       exec('watch -n 3 "oc get pods | grep -viE \'Completed|OOMKilled\'"') if options[:watch_deploy]
       true
     end
@@ -605,35 +612,56 @@ module Porta
       system("oc create -f #{registry_secret_file_path}")
     end
 
-    def openshift_new_app
-      run_in_3scale_operator do
-        system <<~CMD
-          oc new-app --file pkg/3scale/amp/auto-generated-templates/amp/#{options[:openshift_template]}.yml \
-            --param WILDCARD_DOMAIN="#{options[:wildcard_domain]}" \
-            --param AMP_SYSTEM_IMAGE="#{options[:porta_image]}" \
-            --param AMP_BACKEND_IMAGE="#{options[:apisonator_image]}" \
-            --param AMP_APICAST_IMAGE="#{options[:apicast_image]}" \
-            --param AMP_ZYNC_IMAGE="#{options[:zync_image]}" \
-            --param MEMCACHED_IMAGE="#{options[:memcached_image]}" \
-            --param APICAST_REGISTRY_URL="#{options[:apicast_policies_url]}" \
-            #{aws_s3_params} \
-            --param MASTER_PASSWORD=p \
-            --param ADMIN_PASSWORD=p \
-            --param ADMIN_ACCESS_TOKEN=secret \
-            --param APICAST_ACCESS_TOKEN="#{options[:apicast_secret]}"
-        CMD
+    def openshift_deploy
+      deploy_with_operator? ? deploy_with_operator : deploy_with_templates
+    end
+
+    def deploy_with_operator?
+      options[:deploy_with_operator]
+    end
+
+    def deploy_with_templates?
+      !deploy_with_operator?
+    end
+
+    def s3_deployment?
+      return options[:openshift_template].include?('s3') if deploy_with_templates?
+
+      api_manager_yml = openshift_file_path('api-manager')
+      File.readlines(api_manager_yml).grep(/aws-auth/).any?
+    end
+
+    PARAMS = %i[
+      wildcard_domain
+      porta_image apisonator_image apicast_image zync_image memcached_image
+      master_password admin_password admin_access_token
+      apicast_registry_url apicast_secret
+    ].freeze
+    AWS_S3_PARAMS = %i[aws_access_key aws_secret_access_key aws_bucket aws_region]
+
+    def deploy_with_operator
+      params = [:project, :operator_channel, *PARAMS]
+      params.push(*AWS_S3_PARAMS) if s3_deployment?
+      sed_patterns = params.map { |param| "s/\\\${#{param.upcase}}/#{options[param].shellescape.gsub(/\//, '\/')}/g" }
+      sed_command = "sed -e '#{sed_patterns.join(';')}'"
+
+      %w[operator-group subscription system-master-apicast system-seed aws-auth api-manager].each do |custom_resource|
+        system("#{sed_command} #{openshift_file_path(custom_resource)} | oc apply -f -")
       end
     end
 
-    def aws_s3_params
-      return unless options[:openshift_template].include?('s3')
+    def deploy_with_templates
+      params = PARAMS.dup
+      params.push(*AWS_S3_PARAMS) if s3_deployment?
+      params_command = params.map { |param| "--param #{param.upcase}=\"#{options[param]}\"" }.join(' ')
 
-      %Q{ \
-        --param AWS_ACCESS_KEY_ID="#{options[:aws_access_key]}" \
-        --param AWS_SECRET_ACCESS_KEY="#{options[:aws_secret_access_key]}" \
-        --param AWS_BUCKET="#{options[:aws_bucket]}" \
-        --param AWS_REGION="#{options[:aws_region]}" \
-      }
+      run_in_3scale_operator do
+        system("oc new-app --file pkg/3scale/amp/auto-generated-templates/amp/#{options[:openshift_template]}.yml #{params_command}")
+      end
+    end
+
+    def openshift_file_path(resource_name)
+      File.join(File.dirname(File.expand_path(__FILE__)), '..', 'openshift', "#{resource_name}.yml")
     end
   end
 end

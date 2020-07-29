@@ -1,0 +1,23 @@
+apiVersion: apps.3scale.net/v1alpha1
+kind: APIManager
+metadata:
+  name: threescale
+spec:
+  wildcardDomain: ${WILDCARD_DOMAIN}
+  resourceRequirementsEnabled: false
+  system:
+    image: ${PORTA_IMAGE}
+    memcachedImage: ${MEMCACHED_IMAGE}
+    fileStorage:
+      simpleStorageService:
+        configurationSecretRef:
+          name: aws-auth
+  backend:
+    image: ${APISONATOR_IMAGE}
+  apicast:
+    image: ${APICAST_IMAGE}
+    registryURL: ${APICAST_REGISTRY_URL}
+  zync:
+    image: ${ZYNC_IMAGE}
+status:
+  deployments:
