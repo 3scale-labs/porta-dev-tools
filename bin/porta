@@ -30,6 +30,9 @@ module Porta
     aws_secret_access_key: nil,
     aws_bucket: nil,
     aws_region: nil,
+    master_password: 'p',
+    admin_password: 'p',
+    admin_access_token: 'secret',
     apicast_secret: 'apicastsecret',
     apicast_registry_url: 'https://apicast-staging.proda.3sca.net/policies',
     porta_local_provider_api: 'http://provider-admin.3scale.lvh.me:3000',
@@ -424,7 +427,7 @@ module Porta
 
   class ResetCommand < CommandRunner
     def run
-      system('redis-cli flushall') && exec_in_porta { "bundle exec rails db:reset MASTER_PASSWORD=p USER_PASSWORD=p ADMIN_ACCESS_TOKEN=secret APICAST_ACCESS_TOKEN=#{options[:apicast_secret]}" }
+      system('redis-cli flushall') && exec_in_porta { "bundle exec rails db:reset MASTER_PASSWORD=#{options[:master_password]} USER_PASSWORD=#{options[:admin_password]} ADMIN_ACCESS_TOKEN=#{options[:admin_access_token]} APICAST_ACCESS_TOKEN=#{options[:apicast_secret]}" }
     end
   end
 
@@ -628,7 +631,12 @@ module Porta
       File.readlines(api_manager_yml).grep(/aws-auth/).any?
     end
 
-    PARAMS = %i[wildcard_domain porta_image apisonator_image apicast_image zync_image memcached_image apicast_registry_url apicast_secret].freeze
+    PARAMS = %i[
+      wildcard_domain
+      porta_image apisonator_image apicast_image zync_image memcached_image
+      master_password admin_password admin_access_token
+      apicast_registry_url apicast_secret
+    ].freeze
     AWS_S3_PARAMS = %i[aws_access_key aws_secret_access_key aws_bucket aws_region]
 
     def deploy_with_operator
@@ -637,7 +645,7 @@ module Porta
       sed_patterns = params.map { |param| "s/\\\${#{param.upcase}}/#{options[param].shellescape.gsub(/\//, '\/')}/g" }
       sed_command = "sed -e '#{sed_patterns.join(';')}'"
 
-      %w[operator-group subscription aws-auth api-manager].each do |custom_resource|
+      %w[operator-group subscription system-master-apicast system-seed aws-auth api-manager].each do |custom_resource|
         system("#{sed_command} #{openshift_file_path(custom_resource)} | oc apply -f -")
       end
     end
