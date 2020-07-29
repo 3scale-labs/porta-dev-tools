@@ -30,6 +30,7 @@ module Porta
     aws_region: nil,
     apicast_secret: 'apicastsecret',
     apicast_policies_url: 'https://apicast-staging.proda.3sca.net/policies',
+    porta_local_provider_api: 'http://provider-admin.3scale.lvh.me:3000',
     watch_deploy: false,
     verbose: false,
     explain: false
@@ -408,7 +409,12 @@ module Porta
 
   class PortaflyCommand < CommandRunner
     def run
-      exec_in_porta({ 'SKIP_PREFLIGHT_CHECK' => 'true', 'PORT' => '3003' }, sub: 'portafly') { 'yarn install && yarn start' }
+      envs = {
+        'SKIP_PREFLIGHT_CHECK' => 'true',
+        'PORT' => '3003',
+        'REACT_APP_API_HOST' => options[:porta_local_provider_api]
+      }
+      exec_in_porta(envs, sub: 'portafly') { 'yarn install && yarn start' }
     end
   end
 
