@@ -675,7 +675,7 @@ module Porta
     end
 
     def params_for_operator
-      options.slice(:project, :operator_channel).merge(params)
+      options.slice(:project, :operator_channel).transform_keys(&:upcase).merge(params)
     end
 
     def params_for_templates
