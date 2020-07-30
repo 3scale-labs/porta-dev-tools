@@ -33,7 +33,7 @@ module Porta
     master_password: 'p',
     admin_password: 'p',
     admin_access_token: 'secret',
-    apicast_secret: 'apicastsecret',
+    apicast_access_token: 'apicastsecret',
     apicast_registry_url: 'https://apicast-staging.proda.3sca.net/policies',
     porta_local_provider_api: 'http://provider-admin.3scale.lvh.me:3000',
     watch_deploy: false,
@@ -427,7 +427,7 @@ module Porta
 
   class ResetCommand < CommandRunner
     def run
-      system('redis-cli flushall') && exec_in_porta { "bundle exec rails db:reset MASTER_PASSWORD=#{options[:master_password]} USER_PASSWORD=#{options[:admin_password]} ADMIN_ACCESS_TOKEN=#{options[:admin_access_token]} APICAST_ACCESS_TOKEN=#{options[:apicast_secret]}" }
+      system('redis-cli flushall') && exec_in_porta { "bundle exec rails db:reset MASTER_PASSWORD=#{options[:master_password]} USER_PASSWORD=#{options[:admin_password]} ADMIN_ACCESS_TOKEN=#{options[:admin_access_token]} APICAST_ACCESS_TOKEN=#{options[:apicast_access_token]}" }
     end
   end
 
@@ -478,7 +478,7 @@ module Porta
     end
 
     def run_apicast
-      system("docker run -d --name apicast --rm -p 8080:8080 -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_secret]}@host.docker.internal:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://host.docker.internal:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
+      system("docker run -d --name apicast --rm -p 8080:8080 -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@host.docker.internal:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://host.docker.internal:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
     end
 
     def run_sphinx
@@ -635,7 +635,7 @@ module Porta
       wildcard_domain
       porta_image apisonator_image apicast_image zync_image memcached_image
       master_password admin_password admin_access_token
-      apicast_registry_url apicast_secret
+      apicast_registry_url apicast_access_token
     ].freeze
     AWS_S3_PARAMS = %i[aws_access_key aws_secret_access_key aws_bucket aws_region]
 
