@@ -26,7 +26,7 @@ module Porta
     cluster_domain: nil,
     registry_secret_file_path: nil,
     operator_channel: nil,
-    aws_access_key: nil,
+    aws_access_key_id: nil,
     aws_secret_access_key: nil,
     aws_bucket: nil,
     aws_region: nil,
@@ -637,7 +637,7 @@ module Porta
       master_password admin_password admin_access_token
       apicast_registry_url apicast_access_token
     ].freeze
-    AWS_S3_PARAMS = %i[aws_access_key aws_secret_access_key aws_bucket aws_region]
+    AWS_S3_PARAMS = %i[aws_access_key_id aws_secret_access_key aws_bucket aws_region]
 
     def deploy_with_operator
       params = [:project, :operator_channel, *PARAMS]
