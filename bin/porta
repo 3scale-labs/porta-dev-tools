@@ -26,14 +26,14 @@ module Porta
     cluster_domain: nil,
     registry_secret_file_path: nil,
     operator_channel: nil,
-    aws_access_key: nil,
+    aws_access_key_id: nil,
     aws_secret_access_key: nil,
     aws_bucket: nil,
     aws_region: nil,
     master_password: 'p',
     admin_password: 'p',
     admin_access_token: 'secret',
-    apicast_secret: 'apicastsecret',
+    apicast_access_token: 'apicastsecret',
     apicast_registry_url: 'https://apicast-staging.proda.3sca.net/policies',
     porta_local_provider_api: 'http://provider-admin.3scale.lvh.me:3000',
     watch_deploy: false,
@@ -427,7 +427,7 @@ module Porta
 
   class ResetCommand < CommandRunner
     def run
-      system('redis-cli flushall') && exec_in_porta { "bundle exec rails db:reset MASTER_PASSWORD=#{options[:master_password]} USER_PASSWORD=#{options[:admin_password]} ADMIN_ACCESS_TOKEN=#{options[:admin_access_token]} APICAST_ACCESS_TOKEN=#{options[:apicast_secret]}" }
+      system('redis-cli flushall') && exec_in_porta { "bundle exec rails db:reset MASTER_PASSWORD=#{options[:master_password]} USER_PASSWORD=#{options[:admin_password]} ADMIN_ACCESS_TOKEN=#{options[:admin_access_token]} APICAST_ACCESS_TOKEN=#{options[:apicast_access_token]}" }
     end
   end
 
@@ -478,7 +478,7 @@ module Porta
     end
 
     def run_apicast
-      system("docker run -d --name apicast --rm -p 8080:8080 -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_secret]}@host.docker.internal:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://host.docker.internal:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
+      system("docker run -d --name apicast --rm -p 8080:8080 -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@host.docker.internal:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://host.docker.internal:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
     end
 
     def run_sphinx
@@ -635,14 +635,20 @@ module Porta
       wildcard_domain
       porta_image apisonator_image apicast_image zync_image memcached_image
       master_password admin_password admin_access_token
-      apicast_registry_url apicast_secret
+      apicast_registry_url apicast_access_token
     ].freeze
-    AWS_S3_PARAMS = %i[aws_access_key aws_secret_access_key aws_bucket aws_region]
+
+    AWS_S3_PARAMS = %i[aws_access_key_id aws_secret_access_key aws_bucket aws_region]
+
+    TEMPLATES_CORRESPONDENCE_PARAM_NAMES = {
+      porta_image: 'AMP_SYSTEM_IMAGE',
+      apisonator_image: 'AMP_BACKEND_IMAGE',
+      apicast_image: 'AMP_APICAST_IMAGE',
+      zync_image: 'AMP_ZYNC_IMAGE'
+    }.freeze
 
     def deploy_with_operator
-      params = [:project, :operator_channel, *PARAMS]
-      params.push(*AWS_S3_PARAMS) if s3_deployment?
-      sed_patterns = params.map { |param| "s/\\\${#{param.upcase}}/#{options[param].shellescape.gsub(/\//, '\/')}/g" }
+      sed_patterns = params_for_operator.map { |param, value| "s/\\\${#{param}}/#{value.shellescape.gsub(/\//, '\/')}/g" }
       sed_command = "sed -e '#{sed_patterns.join(';')}'"
 
       %w[operator-group subscription system-master-apicast system-seed aws-auth api-manager].each do |custom_resource|
@@ -651,9 +657,7 @@ module Porta
     end
 
     def deploy_with_templates
-      params = PARAMS.dup
-      params.push(*AWS_S3_PARAMS) if s3_deployment?
-      params_command = params.map { |param| "--param #{param.upcase}=\"#{options[param]}\"" }.join(' ')
+      params_command = params_for_templates.map { |param, value| "--param #{param}=\"#{value}\"" }.join(' ')
 
       run_in_3scale_operator do
         system("oc new-app --file pkg/3scale/amp/auto-generated-templates/amp/#{options[:openshift_template]}.yml #{params_command}")
@@ -662,6 +666,23 @@ module Porta
 
     def openshift_file_path(resource_name)
       File.join(File.dirname(File.expand_path(__FILE__)), '..', 'openshift', "#{resource_name}.yml")
+    end
+
+    def params
+      params = PARAMS.dup
+      params.push(*AWS_S3_PARAMS) if s3_deployment?
+      params.map { |param| [param.upcase, options[param]] }.to_h
+    end
+
+    def params_for_operator
+      options.slice(:project, :operator_channel).merge(params)
+    end
+
+    def params_for_templates
+      params.transform_keys do |key|
+        key_sym = key.downcase.to_sym
+        TEMPLATES_CORRESPONDENCE_PARAM_NAMES.key?(key_sym) ? TEMPLATES_CORRESPONDENCE_PARAM_NAMES[key_sym].upcase : key
+      end
     end
   end
 end
