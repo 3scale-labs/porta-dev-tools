@@ -35,7 +35,7 @@ module Porta
     admin_access_token: 'secret',
     apicast_access_token: 'apicastsecret',
     apicast_registry_url: 'https://apicast-staging.proda.3sca.net/policies',
-    porta_local_provider_api: 'http://provider-admin.3scale.lvh.me:3000',
+    porta_local_provider_api: 'http://provider-admin.3scale.localhost:3000',
     watch_deploy: false,
     verbose: false,
     explain: false

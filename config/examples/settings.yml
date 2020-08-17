@@ -2,10 +2,13 @@
 
 settings:
   porta_dir: '~/workspace/porta'
-  threescale_operator_dir: '~/workspace/3scale-operator'
+  zync_dir: '~/workspace/zync'
   apisonator_env_file: '~/workspace/apisonator/.env'
+  threescale_operator_dir: '~/workspace/3scale-operator'
+  openshift_template: 'amp-eval'
   registry_secret_file_path: '~/.my-secrets/rh-registry-sa-secret.yaml'
   operator_channel: 'threescale-2.8'
+  porta_local_provider_api: 'http://provider-admin.3scale.localhost:3000'
   quay_repo: 'quay.io/username/3scale'
   cluster_domain: 'devel-openshift-cluster.com'
   aws_access_key_id: '<aws-access-key>'
@@ -13,4 +16,3 @@ settings:
   aws_bucket: '<aws-bucket>'
   aws_region: '<aws-region>'
   apicast_registry_url: 'https://apicast-staging.proda.3sca.net/policies'
-  dev_gtld: 'local'
