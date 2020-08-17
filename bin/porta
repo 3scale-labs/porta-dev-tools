@@ -36,6 +36,11 @@ module Porta
     apicast_access_token: 'apicastsecret',
     apicast_registry_url: 'https://apicast-staging.proda.3sca.net/policies',
     porta_local_provider_api: 'http://provider-admin.3scale.localhost:3000',
+    database_url: {
+      mysql: 'mysql2://root:@127.0.0.1:3306/3scale_system_development',
+      postgres: 'postgresql://postgres:@localhost/3scale_system_development',
+      oracle: 'oracle-enhanced://rails:railspass@127.0.0.1:1521/systempdb'
+    },
     watch_deploy: false,
     verbose: false,
     explain: false
@@ -130,6 +135,9 @@ module Porta
       super do |opts|
         yield(opts) if block_given?
         opts.on(*command_options(:apicast_registry_url, 'URL to a public APIcast policy registry'))
+        opts.on(*command_options(:mysql_db, "Uses Porta's MySQL database URL (default)", '--mysql'))
+        opts.on(*command_options(:postgres_db, "Uses Porta's postgresql database URL", '--psql'))
+        opts.on(*command_options(:oracle_db, "Uses Porta's Oracle database URL", '--oracle'))
       end
     end
   end
@@ -314,6 +322,8 @@ module Porta
 
     def porta_common_envs
       {
+        'DATABASE_URL' => database_url,
+        'TEST_ENV_NUMBER' => '0', # This is so Porta postgresql db is not the same in dev and test envs
         'APICAST_REGISTRY_URL' => options[:apicast_registry_url],
         'prometheus_multiproc_dir' => "#{porta_dir}/tmp/metrics"
       }
@@ -379,6 +389,11 @@ module Porta
 
     def porta_dir
       File.expand_path(options[:porta_dir])
+    end
+
+    def database_url
+      adapter = (options.keys & %i[mysql_db postgres_db oracle_db]).first || :mysql
+      options.dig(:database_url, adapter.to_s.delete('_db').to_sym)
     end
   end
 
