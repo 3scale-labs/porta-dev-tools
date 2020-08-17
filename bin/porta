@@ -136,7 +136,7 @@ module Porta
         yield(opts) if block_given?
         opts.on(*command_options(:apicast_registry_url, 'URL to a public APIcast policy registry'))
         opts.on(*command_options(:mysql_db, "Uses Porta's MySQL database URL (default)", '--mysql'))
-        opts.on(*command_options(:postgres_db, "Uses Porta's postgresql database URL", '--psql'))
+        opts.on(*command_options(:postgres_db, "Uses Porta's PostgreSQL database URL", '--psql'))
         opts.on(*command_options(:oracle_db, "Uses Porta's Oracle database URL", '--oracle'))
       end
     end
