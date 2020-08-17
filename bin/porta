@@ -314,7 +314,8 @@ module Porta
 
     def porta_common_envs
       {
-        'APICAST_REGISTRY_URL' => options[:apicast_registry_url]
+        'APICAST_REGISTRY_URL' => options[:apicast_registry_url],
+        'prometheus_multiproc_dir' => "#{porta_dir}/tmp/metrics"
       }
     end
 
@@ -325,7 +326,7 @@ module Porta
     end
 
     def run_in_porta(sub: nil, &block)
-      dir = File.expand_path(options[:porta_dir])
+      dir = porta_dir
       dir = File.join(dir, sub) if sub
       run_in_dir(dir, &block)
     end
@@ -374,6 +375,10 @@ module Porta
     def run_in_dir(dir, &block)
       puts "[DIR] #{dir}" if options[:verbose]
       Dir.chdir(dir, &block)
+    end
+
+    def porta_dir
+      File.expand_path(options[:porta_dir])
     end
   end
 
@@ -483,7 +488,7 @@ module Porta
 
     def run_sphinx
       return if sphinx_running?
-      run_in_porta { system("bundle exec rake ts:stop ts:configure ts:start &>#{options[:porta_dir]}/log/development.searchd.log && echo sphinx") }
+      run_in_porta { system("bundle exec rake ts:stop ts:configure ts:start &>#{porta_dir}/log/development.searchd.log && echo sphinx") }
     end
 
     def run_zync
@@ -571,8 +576,8 @@ module Porta
 
   class BuildCommand < CommandRunner
     def run
-      porta_openshift_dir = [options[:porta_dir], 'openshift', 'system'].join('/')
-      Dir.chdir(File.expand_path(porta_openshift_dir)) do
+      porta_openshift_dir = [porta_dir, 'openshift', 'system'].join('/')
+      Dir.chdir(porta_openshift_dir) do
         exec 'make build'
       end
     end
