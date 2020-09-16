@@ -453,7 +453,7 @@ module Porta
 
   class AssetsCommand < CommandRunner
     def run
-      exec_in_porta { 'rm -rf node_modules && npm install && bundle exec rake assets:clean assets:precompile' }
+      exec_in_porta { 'yarn clean && yarn install --check-files && bundle exec rake assets:clean assets:precompile' }
     end
   end
 
