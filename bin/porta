@@ -324,6 +324,7 @@ module Porta
       {
         'DATABASE_URL' => database_url,
         'TEST_ENV_NUMBER' => '0', # This is so Porta postgresql db is not the same in dev and test envs
+        'RAILS_LOG_TO_STDOUT' => '1',
         'APICAST_REGISTRY_URL' => options[:apicast_registry_url],
         'prometheus_multiproc_dir' => "#{porta_dir}/tmp/metrics"
       }
