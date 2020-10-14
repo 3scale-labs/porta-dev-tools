@@ -19,5 +19,7 @@ spec:
     registryURL: ${APICAST_REGISTRY_URL}
   zync:
     image: ${ZYNC_IMAGE}
+  monitoring:
+    enabled: true
 status:
   deployments:
