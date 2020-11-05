@@ -276,6 +276,8 @@ module Porta
     end
   end
 
+  class DataOptionParser < CommandOptionParser; end
+
   class HelpOptionParser < BaseOptionParser
     def initialize
       super do |opts|
@@ -295,6 +297,7 @@ module Porta
           sidekiq      Starts a Sidekiq worker locally
           portafly     Starts Portafly
           reset        Resets Porta's databases (Redis and DBMS)
+          data         Generates fake data (uses the Admin API, server must be running)
           assets       Removes node_modules and precompile assets again
           test         Bundle execs a Porta's Rails test file
           cuke         Bundle execs a Porta's Cucumber test file
@@ -710,6 +713,13 @@ module Porta
         key_sym = key.downcase.to_sym
         TEMPLATES_CORRESPONDENCE_PARAM_NAMES.key?(key_sym) ? TEMPLATES_CORRESPONDENCE_PARAM_NAMES[key_sym].upcase : key
       end
+    end
+  end
+
+  class DataCommand < CommandRunner
+    def run
+      fake_data_script = File.join(Porta.root, 'lib', 'fake_data.rb')
+      system("ruby #{fake_data_script}")
     end
   end
 end
