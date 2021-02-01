@@ -106,6 +106,9 @@ begin
   # Create another API Product: Economy
   economy_api = api.post('services.json', name: 'Economy')['service']
 
+  # Create a paid application plan
+  api.post("/admin/api/services/#{economy_api['id']}/application_plans.json", name: 'Enterprise', setup_fee: 100, cost_per_month: 17)
+
   # Remove catch-all mapping rule from the API product
   catch_all_mapping_rule = api.get("services/#{economy_api['id']}/proxy/mapping_rules.json")['mapping_rules'].first&.fetch('mapping_rule')
   api.delete("services/#{economy_api['id']}/proxy/mapping_rules/#{catch_all_mapping_rule['id']}.json") if catch_all_mapping_rule
