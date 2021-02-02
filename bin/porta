@@ -595,7 +595,7 @@ module Porta
 
   class ResyncCommand < CommandRunner
     def run
-      exec_in_porta { 'rake backend:storage:enqueue_rewrite' }
+      exec_in_porta { 'bundle exec rake backend:storage:enqueue_rewrite' }
     end
   end
 
