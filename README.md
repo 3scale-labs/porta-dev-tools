@@ -67,7 +67,6 @@ porta CMD [options]
 | ---------|-------------------------------------------------------------------------------------------------------------------|
 | server   | Starts the Rails server locally                                                                                   |
 | sidekiq  | Starts a Sidekiq worker locally                                                                                   |
-| portafly | Starts Portafly                                                                                                   |
 | reset    | Resets Porta's databases (Redis and DBMS)                                                                         |
 | data     | Generates fake data (uses the Admin API, server must be running)                                                  |
 | assets   | Removes node_modules and precompile assets again                                                                  |
