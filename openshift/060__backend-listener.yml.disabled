@@ -1,0 +1,11 @@
+# Use with 3scale/porta v2.11+ and operator channel <= threescale-2.9
+
+kind: Secret
+apiVersion: v1
+metadata:
+  creationTimestamp: null
+  name: backend-listener
+stringData:
+  route_endpoint: http://backend-listener:3000/internal/
+  service_endpoint: http://backend-listener:3000
+type: Opaque

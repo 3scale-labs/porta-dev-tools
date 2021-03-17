@@ -4,6 +4,7 @@ require 'optparse'
 require 'digest/sha1'
 require 'yaml'
 require 'shellwords'
+require 'timeout'
 
 module Porta
   DEFAULTS_OPTIONS = {
@@ -24,8 +25,9 @@ module Porta
     cluster_endpoint: nil,
     wildcard_domain: nil,
     cluster_domain: nil,
-    registry_secret_file_path: nil,
+    registry_secrets_glob: nil,
     operator_channel: nil,
+    operator_source: nil,
     aws_access_key_id: nil,
     aws_secret_access_key: nil,
     aws_bucket: nil,
@@ -237,8 +239,9 @@ module Porta
     def initialize
       super do |opts|
         opts.on(*command_options(:threescale_operator_dir, 'Path to the 3scale-operator directory in the file system', '--operator-dir=VALUE'))
-        opts.on(*command_options(:deploy_with_operator, "Deploys using the 3scale operator", '--with-operator'))
-        opts.on(*command_options(:operator_channel, "3scale operator channel"))
+        opts.on(*command_options(:deploy_with_templates, "Deploys using the 3scale OpenShift templates (as oposed to using the 3scale operator, default: false)", '--with-templates'))
+        opts.on(*command_options(:operator_channel, "3scale operator subscription channel"))
+        opts.on(*command_options(:operator_source, "3scale operator subscription source"))
         opts.on(*command_options(:openshift_template, "OpenShift template file – no need to include '.yml' in the end"))
         opts.on(*command_options(:project, 'Name of the OpenShift project (defaults to the name of the current branch of the Porta repo)'))
         opts.on(*command_options(:porta_image, "Porta image to deploy (default: '#{options[:quay_repo]}:porta-<project>')"))
@@ -248,7 +251,7 @@ module Porta
         opts.on(*command_options(:memcached_image, 'Memcached image to deploy'))
         opts.on(*command_options(:cluster_domain, 'Domain of the OpenShift cluster where to deploy Porta'))
         opts.on(*command_options(:wildcard_domain, "Wildcard/termination domain for all external domains of the application (default: '<random-hash>.apps.<cluster_domain>')"))
-        opts.on(*command_options(:registry_secret_file_path, 'Path to the Red Hat Registry secret file in the file system', '--secret-file-path=VALUE'))
+        opts.on(*command_options(:registry_secrets_glob, 'Glob to the private registry secret files in the file system', '--private-secrets=VALUE'))
         opts.on(*command_options(:apicast_registry_url, 'URL to a public APIcast policy registry'))
         opts.on(*command_options(:watch_deploy, 'Whether to watch status of the pods right after deploy', '--[no-]watch'))
       end
@@ -617,7 +620,7 @@ module Porta
 
   class DeployCommand < CommandRunner
     def run
-      return unless openshift_login && openshift_new_project && upload_registry_secret && openshift_deploy
+      return unless openshift_login && openshift_new_project && upload_private_registry_secrets && openshift_deploy
       exec('watch -n 3 "oc get pods | grep -viE \'Completed|OOMKilled\'"') if options[:watch_deploy]
       true
     end
@@ -637,9 +640,28 @@ module Porta
       system("oc new-project #{options[:project]}")
     end
 
-    def upload_registry_secret
-      registry_secret_file_path = File.expand_path(options[:registry_secret_file_path])
-      system("oc create -f #{registry_secret_file_path}")
+    def pull_secret_files
+      Dir.glob(File.expand_path(options[:registry_secrets_glob]))
+    end
+
+    def upload_private_registry_secrets
+      pull_secret_files.each do |file_path|
+        system("oc create -f \"#{file_path}\"")
+      end
+    end
+
+    def link_private_registry_secrets
+      Timeout::timeout(30) do # checks for up to 30s if the 3scale-operator service account is available
+        until system('oc get sa/3scale-operator')
+          puts "retrying..."
+          sleep(0.5)
+        end
+      end
+
+      pull_secret_files.each do |file_path|
+        secret = YAML.load(File.read(file_path))
+        system("oc secrets link 3scale-operator #{secret.dig('metadata', 'name')} --for=pull")
+      end
     end
 
     def openshift_deploy
@@ -647,17 +669,17 @@ module Porta
     end
 
     def deploy_with_operator?
-      options[:deploy_with_operator]
+      !deploy_with_templates?
     end
 
     def deploy_with_templates?
-      !deploy_with_operator?
+      options[:deploy_with_templates]
     end
 
     def s3_deployment?
       return options[:openshift_template].include?('s3') if deploy_with_templates?
 
-      api_manager_yml = openshift_file_path('api-manager')
+      api_manager_yml = openshift_file_path('100__api-manager')
       File.readlines(api_manager_yml).grep(/aws-auth/).any?
     end
 
@@ -681,9 +703,17 @@ module Porta
       sed_patterns = params_for_operator.map { |param, value| "s/\\\${#{param}}/#{value.shellescape.gsub(/\//, '\/')}/g" }
       sed_command = "sed -e '#{sed_patterns.join(';')}'"
 
-      %w[operator-group subscription system-master-apicast system-seed aws-auth api-manager].each do |custom_resource|
-        system("#{sed_command} #{openshift_file_path(custom_resource)} | oc apply -f -")
+      apply_with_sed = ->(glob) do
+        Dir.glob(File.expand_path(glob)).sort.each do |file_path|
+          system("#{sed_command} #{file_path} | oc apply -f -")
+        end
       end
+
+      apply_with_sed.call(openshift_file_path('pre-secrets/*'))
+
+      link_private_registry_secrets
+
+      apply_with_sed.call(openshift_file_path('*'))
     end
 
     def deploy_with_templates
@@ -705,7 +735,7 @@ module Porta
     end
 
     def params_for_operator
-      options.slice(:project, :operator_channel).transform_keys(&:upcase).merge(params)
+      options.slice(:project, :operator_channel, :operator_source).transform_keys(&:upcase).merge(params)
     end
 
     def params_for_templates

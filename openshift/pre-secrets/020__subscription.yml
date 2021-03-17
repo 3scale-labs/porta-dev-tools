@@ -4,6 +4,7 @@ metadata:
   name: 3scale-operator
 spec:
   channel: ${OPERATOR_CHANNEL}
+  installPlanApproval: Automatic
   name: 3scale-operator
-  source: redhat-operators
+  source: ${OPERATOR_SOURCE}
   sourceNamespace: openshift-marketplace
