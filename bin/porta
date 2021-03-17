@@ -45,7 +45,7 @@ module Porta
     },
     watch_deploy: false,
     verbose: false,
-    explain: false
+    dryrun: false
   }
 
   def root
@@ -98,7 +98,7 @@ module Porta
       super do |opts|
         opts.on(*command_options(:porta_dir, 'Path to the Porta directory in the file system'))
         yield(opts) if block_given?
-        opts.on(*command_options(:explain, 'Prints the commands instead of executing them', '--explain'))
+        opts.on(*command_options(:dryrun, 'Prints the commands instead of executing them', '--dry-run'))
         opts.on(*command_options(:verbose, 'Prints every command executed', '--verbose'))
         opts.on(*options_for_help)
       end
@@ -373,17 +373,17 @@ module Porta
 
     def system(*args)
       print_command(*args)
-      Kernel.system(*args) unless options[:explain]
+      Kernel.system(*args) unless options[:dryrun]
       true
     end
 
     def exec(*args)
       print_command(*args)
-      Kernel.exec(*args) unless options[:explain]
+      Kernel.exec(*args) unless options[:dryrun]
     end
 
     def print_command(*args)
-      return unless options[:verbose] || options[:explain]
+      return unless options[:verbose] || options[:dryrun]
 
       command_args = args.dup
       envs = command_args.shift

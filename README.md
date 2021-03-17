@@ -93,7 +93,7 @@ The following options are available with all commands:
 | Option      | Description                                                                              |
 | ------------|------------------------------------------------------------------------------------------|
 | `--help`    | Prints the specific help fo rthe command, which includes a list of the supported options |
-| `--explain` | Prints the commands to STDOUT instead of executing them                                  |
+| `--dry-run` | Prints the commands to STDOUT instead of executing them                                  |
 | `--verbose` | Prints every command executed                                                            |
 
 ## Examples
