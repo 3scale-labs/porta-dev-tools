@@ -43,7 +43,7 @@ Apart from the aforementioned requirements, specific commands of Porta dev-tools
 ```shell
 export PORTA_DEV_TOOLS_PATH=/usr/local/porta-dev-tools
 git clone git@github.com:guicassolato/porta-dev-tools.git $PORTA_DEV_TOOLS_PATH
-echo "export PATH=$PORTA_DEV_TOOLS_PATH/bin:$PATH">>~/.zshrc
+echo "export PATH=$PORTA_DEV_TOOLS_PATH/bin:\$PATH">>~/.zshrc
 ```
 
 ### Settings/defaults
