@@ -19,6 +19,15 @@ address=/staging.apicast.dev/127.0.0.1
 
 The instructions were tested in Mac OS X with zsh shell. You may addapt to your own environment accordingly.
 
+#### Note that on linux you can't use `host.docker.internal` for internal communication.
+You should replace `host.docker.internal` with IP address of your docker instance.
+In the default configuration the IP address is `172.17.0.1`
+You can find the IP address with this command:
+```shell
+ip -4 addr show docker0 2>/dev/null | grep -Po 'inet \K[\d.]+'
+```
+This needs to be changed in the apisonator env file and `config/settings.yml` (`docker_internal_host: '172.17.0.1'`)
+
 ## Parameters
 
 Consider the following general parameters for the [Setup](#setup) and [Run](#run) sections below. Other parameters may be indicated specifically for each component.
@@ -68,6 +77,14 @@ CONFIG_REDIS_PROXY=host.docker.internal:6379/6\n\
 CONFIG_INTERNAL_API_USER=system_app\n\
 CONFIG_INTERNAL_API_PASSWORD=password\n\
 RACK_ENV=production" > <PATH_TO_APISONATOR_ENV_FILE>
+```
+
+### Env file for 3scale/porta
+Update an env file for 3scale/porta with following values:
+
+```shell
+CONFIG_INTERNAL_API_USER=system_app
+CONFIG_INTERNAL_API_PASSWORD=password
 ```
 
 ## Run
