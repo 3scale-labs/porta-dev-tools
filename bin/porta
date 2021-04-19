@@ -38,6 +38,7 @@ module Porta
     apicast_access_token: 'apicastsecret',
     apicast_registry_url: 'https://apicast-staging.proda.3sca.net/policies',
     porta_local_provider_api: 'http://provider-admin.3scale.localhost:3000',
+    docker_internal_host: 'host.docker.internal',
     database_url: {
       mysql: 'mysql2://root:@127.0.0.1:3306/3scale_system_development',
       postgres: 'postgresql://postgres:@localhost/3scale_system_development',
@@ -493,11 +494,11 @@ module Porta
     end
 
     def run_porxy
-      system("docker run -d --name porxy --rm -p 3008:3008 #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
+      system("docker run -d --name porxy --rm --add-host=host.docker.internal:host-gateway -p 3008:3008 #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
     end
 
     def run_apicast
-      system("docker run -d --name apicast --rm -p 8080:8080 -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@host.docker.internal:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://host.docker.internal:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
+      system("docker run -d --name apicast --rm -p 8080:8080 -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@#{options[:docker_internal_host]}:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://#{options[:docker_internal_host]}:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
     end
 
     def run_sphinx

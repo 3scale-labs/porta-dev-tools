@@ -17,3 +17,4 @@ settings:
   aws_bucket: '<aws-bucket>'
   aws_region: '<aws-region>'
   apicast_registry_url: 'https://apicast-staging.proda.3sca.net/policies'
+  docker_internal_host: 'host.docker.internal'
