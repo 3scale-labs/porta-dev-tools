@@ -501,7 +501,7 @@ module Porta
     end
 
     def run_sphinx
-      return if sphinx_running?
+      return true if sphinx_running?
       run_in_porta { system("bundle exec rake ts:stop ts:configure ts:start &>#{porta_dir}/log/development.searchd.log && echo sphinx") }
     end
 
