@@ -406,6 +406,14 @@ module Porta
     def stdout_log?
       options[:stdout_log]
     end
+
+    def macos?
+      /darwin/ =~ RUBY_PLATFORM
+    end
+
+    def linux?
+      !macos?
+    end
   end
 
   class ServerCommand < CommandRunner
@@ -494,7 +502,7 @@ module Porta
     end
 
     def run_porxy
-      system("docker run -d --name porxy --rm --add-host=host.docker.internal:host-gateway -p 3008:3008 #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
+      system("docker run -d --name porxy --rm #{'--add-host=host.docker.internal:host-gateway' if linux?} -p 3008:3008 #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
     end
 
     def run_apicast
