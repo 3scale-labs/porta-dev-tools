@@ -105,6 +105,7 @@ begin
 
   # Create another API Product: Economy
   economy_api = api.post('services.json', name: 'Economy')['service']
+  api.put("/admin/api/services/#{economy_api['id']}/proxy.json", credentials_location: 'header', auth_user_key: 'X-APIKEY')
 
   # Create a paid application plan
   api.post("/admin/api/services/#{economy_api['id']}/application_plans.json", name: 'Enterprise', setup_fee: 100, cost_per_month: 17)
