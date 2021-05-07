@@ -5,6 +5,7 @@ require 'digest/sha1'
 require 'yaml'
 require 'shellwords'
 require 'timeout'
+require 'bundler'
 
 module Porta
   DEFAULTS_OPTIONS = {
@@ -194,6 +195,10 @@ module Porta
         opts.on(*command_options(:apisonator_env_file, "Path to Apisonator's environment variables file in the file system"))
         opts.on(*command_options(:deps_down, 'Stops porta dependencies running', '--down'))
         opts.on(*command_options(:deps_status, 'Prints status of porta dependencies running', '--status'))
+        opts.on(*command_options(:apisonator, 'Runs apisonator (listener and worker)', '--apisonator'))
+        opts.on(*command_options(:apicast, 'Runs APIcast (with Porxy)', '--apicast'))
+        opts.on(*command_options(:sphinx, 'Runs Sphinx', '--sphinx'))
+        opts.on(*command_options(:zync, 'Runs Zync and Zync Que', '--zync'))
       end
     end
   end
@@ -337,8 +342,12 @@ module Porta
     end
 
     def exec_in_porta(envs = {}, sub: nil, &block)
+      in_porta(:exec, envs, sub: sub, &block)
+    end
+
+    def in_porta(action = :system, envs = {}, sub: nil, &block)
       run_in_porta(sub: sub) do
-        exec porta_common_envs.merge(envs), block.call
+        send(action, porta_common_envs.merge(envs), try_rbenv(block.call))
       end
     end
 
@@ -353,20 +362,45 @@ module Porta
     end
 
     def exec_in_zync(envs = {}, sub: nil, &block)
+      in_zync(:exec, envs, sub: sub, &block)
+    end
+
+    def in_zync(action = :system, envs = {}, sub: nil, &block)
       run_in_zync(sub: sub) do
-        exec zync_common_envs.merge(envs), block.call
+        send(action, zync_common_envs.merge(envs), try_rbenv(block.call))
       end
     end
 
     def run_in_zync(sub: nil, &block)
-      dir = File.expand_path(options[:zync_dir])
+      dir = zync_dir
       dir = File.join(dir, sub) if sub
       run_in_dir(dir, &block)
     end
 
     def run_in_3scale_operator(&block)
-      dir = File.expand_path(options[:threescale_operator_dir])
-      run_in_dir(dir, &block)
+      run_in_dir(threescale_operator_dir, &block)
+    end
+
+    def run_in_dir(dir, &block)
+      puts "[DIR] #{dir}" if options[:verbose]
+      with_unbundled_env do
+        Dir.chdir(dir, &block)
+      end
+    end
+
+    def with_unbundled_env(&block)
+      Bundler.respond_to?(:with_unbundled_env) ? Bundler.with_unbundled_env(&block) : Bundler.with_clean_env(&block)
+    end
+
+    def try_rbenv(cmd)
+      return cmd if `which rbenv`.empty?
+      ruby_version = begin
+        File.read('.ruby-version').chomp
+      rescue Errno::ENOENT
+        `rbenv version-name`.chomp
+      end
+      ruby_dir = File.expand_path("~/.rbenv/versions/#{ruby_version}/bin")
+      "unset RUBYOPT; export PATH=\"#{ruby_dir}:$PATH\"; #{cmd}"
     end
 
     def system(*args)
@@ -385,17 +419,31 @@ module Porta
 
       command_args = args.dup
       envs = command_args.shift
-      cmd = [envs.respond_to?(:map) ? envs.map { |(env, value)| [env, value].join('=') }.join(' ') : envs, *command_args]
+
+      if envs.is_a?(Hash)
+        envs = envs.empty? ? nil : (['export', envs.to_a.map { |env| env.join('=') }].join(' ') + ';')
+        cmd = [envs, *command_args].compact
+      else
+        cmd = [envs, *command_args]
+      end
+
       puts "[CMD] #{cmd.join(' ')}"
     end
 
-    def run_in_dir(dir, &block)
-      puts "[DIR] #{dir}" if options[:verbose]
-      Dir.chdir(dir, &block)
+    def porta_dev_tools_dir
+      Porta.root
     end
 
     def porta_dir
       File.expand_path(options[:porta_dir])
+    end
+
+    def zync_dir
+      File.expand_path(options[:zync_dir])
+    end
+
+    def threescale_operator_dir
+      File.expand_path(options[:threescale_operator_dir])
     end
 
     def database_url
@@ -427,7 +475,7 @@ module Porta
 
     def run
       queues_arg = queues.map { |queue| "--queue #{queue}" }
-      exec_in_porta { "bundle exec sidekiq #{queues_arg.join(' ')} -c #{concurrency}" }
+      exec_in_porta('PROMETHEUS_EXPORTER_PORT' => '9395') { "bundle exec sidekiq #{queues_arg.join(' ')} -c #{concurrency}" }
     end
 
     protected
@@ -461,7 +509,7 @@ module Porta
 
   class AssetsCommand < CommandRunner
     def run
-      exec_in_porta { 'yarn clean && yarn install --check-files && bundle exec rake assets:clean assets:precompile' }
+      in_porta { 'yarn clean && yarn install --check-files' } && exec_in_porta { 'bundle exec rake assets:clean assets:precompile' }
     end
   end
 
@@ -482,12 +530,21 @@ module Porta
       return stop_deps if options[:deps_down]
       return status if options[:deps_status]
 
-      run_apisonator && run_porxy && run_apicast && run_sphinx && run_zync
+      return run_all if options.slice(:apisonator, :apicast, :sphinx, :zync).empty?
+
+      run_apisonator if options[:apisonator]
+      run_porxy && run_apicast if options[:apicast]
+      run_sphinx if options[:sphinx]
+      run_zync if options[:zync]
     end
 
     protected
 
     DOCKER_DEPS = %w[apicast porxy apisonator_worker apisonator].freeze
+
+    def run_all
+      run_apisonator && run_porxy && run_apicast && run_sphinx && run_zync
+    end
 
     def run_apisonator
       run_apisonator_listener && run_apisonator_worker
@@ -511,7 +568,7 @@ module Porta
 
     def run_sphinx
       return true if sphinx_running?
-      run_in_porta { system("bundle exec rake ts:stop ts:configure ts:start &>#{porta_dir}/log/development.searchd.log && echo sphinx") }
+      in_porta { "bundle exec rake ts:stop ts:configure ts:start &>#{porta_dir}/log/development.searchd.log && echo sphinx" }
     end
 
     def run_zync
@@ -520,11 +577,13 @@ module Porta
     end
 
     def run_zync_puma
-      run_in_zync { system("bundle exec rails server -p 5000 &>#{options[:zync_dir]}/log/development.log & echo zync") }
+      in_zync { "bundle exec rails server -p 5000 &>#{zync_dir}/log/development.log & echo zync" }
     end
 
     def run_zync_que
-      run_in_zync { system("PROMETHEUS_EXPORTER_PORT=9395 bundle exec rake que &>#{options[:zync_dir]}/log/development.log & echo que") }
+      in_zync(:system, 'PROMETHEUS_EXPORTER_PORT' => '9396') do
+        "bundle exec que &>#{zync_dir}/log/development.log & echo que"
+      end
     end
 
     def stop_deps
@@ -539,7 +598,7 @@ module Porta
 
     def stop_sphinx
       return puts 'sphinx' unless sphinx_running?
-      run_in_porta { system('bundle exec rake ts:stop &>/dev/null && echo sphinx') }
+      in_porta { 'bundle exec rake ts:stop &>/dev/null && echo sphinx' }
     end
 
     def stop_zync
@@ -550,12 +609,12 @@ module Porta
 
     def stop_zync_puma
       return puts 'zync' unless zync_puma_running?
-      system("ps ax | grep -v grep | grep puma | grep zync | awk '{ print $1 }' | xargs kill -9 && echo zync")
+      system("ps ax | grep -v grep | grep puma | grep zync | awk '{ print $1 }' | xargs kill && echo zync")
     end
 
     def stop_zync_que
       return puts 'que' unless zync_que_running?
-      system("ps ax | grep -v grep | grep 'bin/que' | awk '{ print $1 }' | xargs kill -9 && echo que")
+      system("ps ax | grep -v grep | grep 'bin/que' | awk '{ print $1 }' | xargs kill && echo que")
     end
 
     def sphinx_running?
@@ -571,7 +630,7 @@ module Porta
     end
 
     def zync_installed?
-      Dir.exist?(File.expand_path(options[:zync_dir]))
+      Dir.exist?(zync_dir)
     end
 
     def status
@@ -599,10 +658,7 @@ module Porta
 
   class BuildCommand < CommandRunner
     def run
-      porta_openshift_dir = [porta_dir, 'openshift', 'system'].join('/')
-      Dir.chdir(porta_openshift_dir) do
-        exec 'make build'
-      end
+      run_in_porta(sub: 'openshift/system') { exec 'make build' }
     end
   end
 
@@ -743,8 +799,7 @@ module Porta
 
   class DataCommand < CommandRunner
     def run
-      fake_data_script = File.join(Porta.root, 'lib', 'fake_data.rb')
-      system("ruby #{fake_data_script}")
+      run_in_dir(porta_dev_tools_dir) { exec try_rbenv('ruby lib/fake_data.rb') }
     end
   end
 end
