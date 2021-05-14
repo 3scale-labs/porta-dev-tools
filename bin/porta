@@ -8,14 +8,22 @@ require 'timeout'
 require 'bundler'
 
 module Porta
+  def root
+    File.expand_path('../..', __FILE__)
+  end
+  def basedir
+    File.expand_path('..', root)
+  end
+  module_function :root, :basedir
+
   DEFAULTS_OPTIONS = {
-    porta_dir: '~/workspace/porta',
-    zync_dir: '~/workspace/zync',
+    porta_dir: "#{basedir}/porta",
+    zync_dir: "#{basedir}/zync",
     branch: nil,
     project: nil,
     quay_repo: 'quay.io/3scale/porta',
-    threescale_operator_dir: '~/workspace/3scale-operator',
-    apisonator_env_file: '~/workspace/apisonator/.env',
+    threescale_operator_dir: "#{basedir}/3scale-operator",
+    apisonator_env_file: "#{basedir}/apisonator/.env",
     openshift_template: 'amp-eval-s3',
     porta_image: nil,
     apisonator_image: 'quay.io/3scale/apisonator:nightly',
@@ -39,7 +47,7 @@ module Porta
     apicast_access_token: 'apicastsecret',
     apicast_registry_url: 'https://apicast-staging.proda.3sca.net/policies',
     porta_local_provider_api: 'http://provider-admin.3scale.localhost:3000',
-    docker_internal_host: 'host.docker.internal',
+    docker_internal_host: nil,
     database_url: {
       mysql: 'mysql2://root:@127.0.0.1:3306/3scale_system_development',
       postgres: 'postgresql://postgres:@localhost/3scale_system_development',
@@ -49,11 +57,6 @@ module Porta
     verbose: false,
     dryrun: false
   }
-
-  def root
-    File.expand_path('../..', __FILE__)
-  end
-  module_function :root
 
   def settings
     settings_path = File.join(root, 'config', 'settings.yml')
@@ -330,6 +333,32 @@ module Porta
 
     protected
 
+    def docker_internal_host
+      options[:docker_internal_host] ||= container_local_host_ip
+    end
+
+    def container_local_host_ip(image: nil)
+      image ||= options[:porxy_image]
+      gw_ip_cmd = %{printf "%d.%d.%d.%d" $(awk '$2 == 00000000 && $7 == 00000000 { for (i = 8; i >= 2; i=i-2) { print "0x" substr($3, i-1, 2) } }' /proc/net/route)}
+      `docker run --rm --entrypoint /bin/bash #{image} -c #{gw_ip_cmd.shellescape}`
+    end
+
+    def container_opts_local_hosts(*hosts)
+      hosts ||= []
+      unless macos?
+        hosts << "host.docker.internal"
+        if `docker --version`.include?("podman")
+          gw_ip = docker_internal_host
+          host_access = "--net slirp4netns:allow_host_loopback=true"
+          if File.read("/etc/resolv.conf") =~ /nameserver\s+127\.0\.0\.1$/
+            host_access += " --dns=#{gw_ip}"
+          end
+        end
+      end
+      gw_ip ||= 'host-gateway'
+      hosts.map { |h| "--add-host=#{h}:#{gw_ip} " }.join + "#{host_access}"
+    end
+
     def porta_common_envs
       envs = {
         'DATABASE_URL' => database_url,
@@ -475,7 +504,7 @@ module Porta
 
     def run
       queues_arg = queues.map { |queue| "--queue #{queue}" }
-      exec_in_porta('PROMETHEUS_EXPORTER_PORT' => '9395') { "bundle exec sidekiq #{queues_arg.join(' ')} -c #{concurrency}" }
+      exec_in_porta { "bundle exec sidekiq #{queues_arg.join(' ')} -c #{concurrency} --index 2" }
     end
 
     protected
@@ -551,19 +580,19 @@ module Porta
     end
 
     def run_apisonator_listener
-      system("docker run -d --name apisonator --rm -p 3001:3001 --env-file #{options[:apisonator_env_file]} -it #{options[:apisonator_image]} 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log >/dev/null && echo \"apisonator\"")
+      system("docker run -d --name apisonator --rm #{container_opts_local_hosts} -p 3001:3001 --env-file #{options[:apisonator_env_file]} -it #{options[:apisonator_image]} 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log >/dev/null && echo \"apisonator\"")
     end
 
     def run_apisonator_worker
-      system("docker run -d --name apisonator_worker --rm --env-file #{options[:apisonator_env_file]} -it #{options[:apisonator_image]} 3scale_backend_worker run >/dev/null && echo \"apisonator_worker\"")
+      system("docker run -d --name apisonator_worker --rm #{container_opts_local_hosts} --env-file #{options[:apisonator_env_file]} -it #{options[:apisonator_image]} 3scale_backend_worker run >/dev/null && echo \"apisonator_worker\"")
     end
 
     def run_porxy
-      system("docker run -d --name porxy --rm #{'--add-host=host.docker.internal:host-gateway' if linux?} -p 3008:3008 #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
+      system("docker run -d --name porxy --rm #{container_opts_local_hosts "master-account.3scale.localhost"} -p 3008:3008 #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
     end
 
     def run_apicast
-      system("docker run -d --name apicast --rm -p 8080:8080 -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@#{options[:docker_internal_host]}:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://#{options[:docker_internal_host]}:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
+      system("docker run -d --name apicast --rm -p 8080:8080 #{container_opts_local_hosts} -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@#{docker_internal_host}:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://#{docker_internal_host}:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
     end
 
     def run_sphinx
