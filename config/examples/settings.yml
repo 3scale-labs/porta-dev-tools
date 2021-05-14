@@ -17,4 +17,5 @@ settings:
   aws_bucket: '<aws-bucket>'
   aws_region: '<aws-region>'
   apicast_registry_url: 'https://apicast-staging.proda.3sca.net/policies'
+  # On Linux this should be an IP address, see porxy/README.md
   docker_internal_host: 'host.docker.internal'
