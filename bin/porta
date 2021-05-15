@@ -6,6 +6,7 @@ require 'yaml'
 require 'shellwords'
 require 'timeout'
 require 'bundler'
+require 'mkmf'
 
 module Porta
   def root
@@ -422,7 +423,7 @@ module Porta
     end
 
     def try_rbenv(cmd)
-      return cmd if `which rbenv`.empty?
+      return cmd unless find_executable0('rbenv')
       ruby_version = begin
         File.read('.ruby-version').chomp
       rescue Errno::ENOENT
