@@ -4,6 +4,7 @@ require 'optparse'
 require 'digest/sha1'
 require 'yaml'
 require 'shellwords'
+require 'tempfile'
 require 'timeout'
 require 'bundler'
 require 'mkmf'
@@ -12,9 +13,11 @@ module Porta
   def root
     File.expand_path('../..', __FILE__)
   end
+
   def basedir
     File.expand_path('..', root)
   end
+
   module_function :root, :basedir
 
   DEFAULTS_OPTIONS = {
@@ -24,7 +27,6 @@ module Porta
     project: nil,
     quay_repo: 'quay.io/3scale/porta',
     threescale_operator_dir: "#{basedir}/3scale-operator",
-    apisonator_env_file: "#{basedir}/apisonator/.env",
     openshift_template: 'amp-eval-s3',
     porta_image: nil,
     apisonator_image: 'quay.io/3scale/apisonator:nightly',
@@ -45,9 +47,16 @@ module Porta
     master_password: 'p',
     admin_password: 'p',
     admin_access_token: 'secret',
+    internal_api_user: 'system_app',
+    internal_api_password: 'password',
     apicast_access_token: 'apicastsecret',
     apicast_registry_url: 'https://apicast-staging.proda.3sca.net/policies',
+    sidekiq_prometheus_port: "9395",
+    zync_prometheus_port: "9396",
+    zync_authentication_token: 'zync_token',
+    zync_endpoint: 'http://127.0.0.1:5000',
     porta_local_provider_api: 'http://provider-admin.3scale.localhost:3000',
+    # host/ip of localhost inside container is autodetected but one can override
     docker_internal_host: nil,
     database_url: {
       mysql: 'mysql2://root:@127.0.0.1:3306/3scale_system_development',
@@ -61,15 +70,25 @@ module Porta
 
   def settings
     settings_path = File.join(root, 'config', 'settings.yml')
-    YAML.load_file(settings_path).fetch('settings', {}).transform_keys(&:to_sym)
+    YAML.load_file(settings_path).fetch('settings', {}).transform_keys(&:to_sym).tap { |settings|
+      porta = settings.delete(:porta)
+      zync = settings.delete(:zync)
+      apisonator = settings.delete(:apisonator)
+      sidekiq = settings.delete(:sidekiq)
+      porta&.each { |k, v| settings["porta_#{k}".to_sym] = v }
+      zync&.each { |k, v| settings["zync_#{k}".to_sym] = v }
+      apisonator&.each { |k, v| settings["apisonator_#{k}".to_sym] = v }
+      sidekiq&.each { |k, v| settings["sidekiq_#{k}".to_sym] = v }
+    }
   rescue Errno::ENOENT
     {}
   end
+
   module_function :settings
 
   class BaseOptionParser < ::OptionParser
     def initialize
-      @options = DEFAULTS_OPTIONS.merge(Porta.settings)
+      @options = deep_merge(DEFAULTS_OPTIONS, Porta.settings)
 
       super do |opts|
         opts.banner = banner
@@ -96,6 +115,17 @@ module Porta
 
         Options:
       BANNER
+    end
+
+    # @note this one does not merge Arrays
+    def deep_merge(base_hash, override_hash)
+      base_hash.merge(override_hash) do |key, oldval, newval|
+        if oldval.kind_of?(Hash) && newval.kind_of?(Hash)
+          deep_merge(oldval, newval)
+        else
+          newval
+        end
+      end
     end
   end
 
@@ -196,7 +226,6 @@ module Porta
         opts.on(*command_options(:apisonator_image, 'Apisonator image to launch in a docker'))
         opts.on(*command_options(:apicast_image, 'APIcast image to launch in a docker'))
         opts.on(*command_options(:porxy_image, 'Porxy image to launch in a docker'))
-        opts.on(*command_options(:apisonator_env_file, "Path to Apisonator's environment variables file in the file system"))
         opts.on(*command_options(:deps_down, 'Stops porta dependencies running', '--down'))
         opts.on(*command_options(:deps_status, 'Prints status of porta dependencies running', '--status'))
         opts.on(*command_options(:apisonator, 'Runs apisonator (listener and worker)', '--apisonator'))
@@ -339,13 +368,11 @@ module Porta
     end
 
     def container_local_host_ip(image: nil)
-      image ||= options[:porxy_image]
       gw_ip_cmd = %{printf "%d.%d.%d.%d" $(awk '$2 == 00000000 && $7 == 00000000 { for (i = 8; i >= 2; i=i-2) { print "0x" substr($3, i-1, 2) } }' /proc/net/route)}
-      `docker run --rm --entrypoint /bin/bash #{image} -c #{gw_ip_cmd.shellescape}`
+      `docker run --rm --entrypoint /bin/bash #{image || options[:porxy_image]} -c #{gw_ip_cmd.shellescape}`
     end
 
     def container_opts_local_hosts(*hosts)
-      hosts ||= []
       unless macos?
         hosts << "host.docker.internal"
         if `docker --version`.include?("podman")
@@ -388,7 +415,9 @@ module Porta
     end
 
     def zync_common_envs
-      {}
+      envs = options[:zync_env] || {}
+      envs["ZYNC_AUTHENTICATION_TOKEN"] ||= options[:zync_authentication_token]
+      envs
     end
 
     def exec_in_zync(envs = {}, sub: nil, &block)
@@ -496,7 +525,19 @@ module Porta
 
   class ServerCommand < CommandRunner
     def run
-      exec_in_porta('OBJC_DISABLE_INITIALIZE_FORK_SAFETY' => 'YES', 'UNICORN_WORKERS' => '8') { 'rails server -b 0.0.0.0' }
+      exec_in_porta(envs) { 'rails server -b 0.0.0.0' }
+    end
+
+    protected
+
+    def envs
+      {
+        "OBJC_DISABLE_INITIALIZE_FORK_SAFETY" => "YES",
+        "UNICORN_WORKERS" => "8",
+        "PORT" => "3000",
+        "CONFIG_INTERNAL_API_USER" => options[:internal_api_user],
+        "CONFIG_INTERNAL_API_PASSWORD" => options[:internal_api_password],
+      }
     end
   end
 
@@ -505,10 +546,20 @@ module Porta
 
     def run
       queues_arg = queues.map { |queue| "--queue #{queue}" }
-      exec_in_porta { "bundle exec sidekiq #{queues_arg.join(' ')} -c #{concurrency} --index 2" }
+      exec_in_porta(envs) { "bundle exec sidekiq #{queues_arg.join(' ')} -c #{concurrency}" }
     end
 
     protected
+
+    def envs
+      {
+        "CONFIG_INTERNAL_API_USER" => options[:internal_api_user],
+        "CONFIG_INTERNAL_API_PASSWORD" => options[:internal_api_password],
+        "ZYNC_AUTHENTICATION_TOKEN" => options[:zync_authentication_token],
+        "ZYNC_ENDPOINT" => options[:zync_endpoint],
+        "PROMETHEUS_EXPORTER_PORT" => options[:sidekiq_prometheus_port].to_s,
+      }
+    end
 
     def concurrency
       options[:concurrency] || 2
@@ -580,12 +631,35 @@ module Porta
       run_apisonator_listener && run_apisonator_worker
     end
 
+    def with_apisonator_env
+      return unless block_given?
+      Tempfile.open('apisonator_env') do |f|
+        f.write apisonator_env_str
+        f.flush
+        yield f.path
+      end
+    end
+
+    def apisonator_env_str
+      env = options[:apisonator_env] || {}
+      env["CONFIG_INTERNAL_API_USER"] ||= options[:internal_api_user]
+      env["CONFIG_INTERNAL_API_PASSWORD"] ||= options[:internal_api_password]
+      env["CONFIG_QUEUES_MASTER_NAME"] ||= "#{docker_internal_host}:6379/5"
+      env["CONFIG_REDIS_PROXY"] ||= "#{docker_internal_host}:6379/6"
+      env["RACK_ENV"] ||= "production"
+      env.map { |k,v| "#{k}=#{v}" }.join("\n")
+    end
+
     def run_apisonator_listener
-      system("docker run -d --name apisonator --rm #{container_opts_local_hosts} -p 3001:3001 --env-file #{options[:apisonator_env_file]} -it #{options[:apisonator_image]} 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log >/dev/null && echo \"apisonator\"")
+      with_apisonator_env do |env_file|
+        system("docker run -d --name apisonator --rm #{container_opts_local_hosts} -p 3001:3001 --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log >/dev/null && echo \"apisonator\"")
+      end
     end
 
     def run_apisonator_worker
-      system("docker run -d --name apisonator_worker --rm #{container_opts_local_hosts} --env-file #{options[:apisonator_env_file]} -it #{options[:apisonator_image]} 3scale_backend_worker run >/dev/null && echo \"apisonator_worker\"")
+      with_apisonator_env do |env_file|
+        system("docker run -d --name apisonator_worker --rm #{container_opts_local_hosts} --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend_worker run >/dev/null && echo \"apisonator_worker\"")
+      end
     end
 
     def run_porxy
@@ -607,11 +681,13 @@ module Porta
     end
 
     def run_zync_puma
-      in_zync { "bundle exec rails server -p 5000 &>#{zync_dir}/log/development.log & echo zync" }
+      in_zync(:system, 'PROMETHEUS_EXPORTER_PORT' => "#{options[:zync_prometheus_port]}") do
+        "bundle exec rails server -p 5000 &>#{zync_dir}/log/development.log & echo zync"
+      end
     end
 
     def run_zync_que
-      in_zync(:system, 'PROMETHEUS_EXPORTER_PORT' => '9396') do
+      in_zync(:system, 'PROMETHEUS_EXPORTER_PORT' => "#{options[:zync_prometheus_port]}") do
         "bundle exec que &>#{zync_dir}/log/development.log & echo que"
       end
     end
