@@ -404,7 +404,7 @@ module Porta
 
     def in_porta(action = :system, envs = {}, sub: nil, &block)
       run_in_porta(sub: sub) do
-        send(action, porta_common_envs.merge(envs), try_rbenv(block.call))
+        send(action, porta_common_envs.merge(envs), with_ruby_wrapper(block.call))
       end
     end
 
@@ -426,7 +426,7 @@ module Porta
 
     def in_zync(action = :system, envs = {}, sub: nil, &block)
       run_in_zync(sub: sub) do
-        send(action, zync_common_envs.merge(envs), try_rbenv(block.call))
+        send(action, zync_common_envs.merge(envs), with_ruby_wrapper(block.call))
       end
     end
 
@@ -451,8 +451,23 @@ module Porta
       Bundler.respond_to?(:with_unbundled_env) ? Bundler.with_unbundled_env(&block) : Bundler.with_clean_env(&block)
     end
 
-    def try_rbenv(cmd)
-      return cmd unless find_executable0('rbenv')
+    def with_ruby_wrapper(cmd)
+      case
+      when find_executable0('rbenv')
+        with_rbenv(cmd)
+      when find_executable0('asdf')
+        with_asdf(cmd)
+      else
+        cmd
+      end
+    end
+
+    def with_asdf(cmd)
+      shell = ENV["SHELL"] || "sh"
+      "asdf env ruby #{shell} -c #{cmd.shellescape}"
+    end
+
+    def with_rbenv(cmd)
       ruby_version = begin
         File.read('.ruby-version').chomp
       rescue Errno::ENOENT
@@ -905,7 +920,7 @@ module Porta
 
   class DataCommand < CommandRunner
     def run
-      run_in_dir(porta_dev_tools_dir) { exec try_rbenv('ruby lib/fake_data.rb') }
+      run_in_dir(porta_dev_tools_dir) { exec with_ruby_wrapper('ruby lib/fake_data.rb') }
     end
   end
 end
