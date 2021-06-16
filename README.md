@@ -13,7 +13,9 @@ Porta dev-tools assume you can already run 3scale/porta locally with whatever DB
 
 A running instance of Redis is expected to be attending to port 6379, as well as a DNS resolver capable of handling wildcard domains, such as dnsmasq. These are usual requirements of 3scale/porta, but may be used as well by other components triggered with some of Porta dev-tools commands.
 
-For Zync, please see [README](https://github.com/3scale/zync) for PostgreSQL setup.
+`redis-cli` is needed for `porta reset`. If you are running Redis in a container, you may create a script with that name in PATH with a content like `docker exec redis redis-cli "$@"`.
+
+For Zync, please see [Quickstart guide](https://github.com/3scale/zync/blob/master/doc/Quickstart.md) for PostgreSQL setup.
 
 If you are using dnsmasq or another DNS server locally, make sure to include the following two DNS records. They will be particularly useful to run Porta along with [3scale/APIcast](https://github.com/3scale/apicast).
 
