@@ -1,15 +1,21 @@
 # Copy this file under /config
 
 settings:
-  porta_dir: '~/workspace/porta'
-  zync_dir: '~/workspace/zync'
-  apisonator_env_file: '~/workspace/apisonator/.env'
+  porta:
+    dir: '~/workspace/porta'
+    local_provider_api: 'http://provider-admin.3scale.localhost:3000'
+  zync:
+    dir: '~/workspace/zync'
+    prometheus_port: "9396"
+    env:
+      DATABASE_URL: "postgresql://postgres:@localhost:5432/zync"
+  sidekiq:
+    prometheus_port: "9395"
   threescale_operator_dir: '~/workspace/3scale-operator'
   openshift_template: 'amp-eval'
   registry_secrets_glob: '~/.my-secrets/*.yaml'
   operator_channel: 'threescale-2.9'  # e.g. 'alpha', 'threescale-2.9'
   operator_source: 'redhat-operators' # e.g. 'threescale-productized-index-alpha', 'redhat-operators'
-  porta_local_provider_api: 'http://provider-admin.3scale.localhost:3000'
   quay_repo: 'quay.io/username/3scale'
   cluster_domain: 'devel-openshift-cluster.com'
   aws_access_key_id: '<aws-access-key>'
@@ -17,4 +23,5 @@ settings:
   aws_bucket: '<aws-bucket>'
   aws_region: '<aws-region>'
   apicast_registry_url: 'https://apicast-staging.proda.3sca.net/policies'
+  # On Linux this should be an IP address, see porxy/README.md
   docker_internal_host: 'host.docker.internal'

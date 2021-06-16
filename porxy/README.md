@@ -19,12 +19,16 @@ address=/staging.apicast.dev/127.0.0.1
 
 The instructions were tested in Mac OS X with zsh shell. You may addapt to your own environment accordingly.
 
-#### Note that on linux you can't use `host.docker.internal` for internal communication.
-You should replace `host.docker.internal` with IP address of your docker instance.
-In the default configuration the IP address is `172.17.0.1`
-You can find the IP address with this command:
+#### Note: `host.docker.internal` on linux
+
+On linux you can't use `host.docker.internal` for internal communication.
+You should replace `host.docker.internal` with the IP of your container gateway.
+In the default Docker configuration the IP address is `172.17.0.1`.
+With rootless Podman default one is `10.0.2.2`.
+You can find the IP address with one of the following commands:
 ```shell
 ip -4 addr show docker0 2>/dev/null | grep -Po 'inet \K[\d.]+'
+printf "%d.%d.%d.%d" $(awk '$2 == 00000000 && $7 == 00000000 { for (i = 8; i >= 2; i=i-2) { print "0x" substr($3, i-1, 2) } }' /proc/net/route)
 ```
 This needs to be changed in the apisonator env file and `config/settings.yml` (`docker_internal_host: '172.17.0.1'`)
 

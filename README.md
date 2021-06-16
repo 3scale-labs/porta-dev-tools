@@ -2,8 +2,7 @@
 These are dev tools to play with [3scale/porta](https://github.com/3scale/porta) in local environment. They include:
 
 1. a CLI to ease commands such as starting the Rails server, launch dependencies, deploy to OpenShift, etc (see the [full list](#supported-commands) of commands)
-2. [Porxy](porxy/README.md), a porksy proxy to porta
-
+2. [Porxy](porxy/README.md), a porksy reverse proxy to porta. Because [APIcast](https://github.com/3scale/apicast) has it's own DNS resolution that we can't override with `/etc/hosts`, we need this reverse proxy.
 
 > :warning: Porta dev-tools are for development purposes and cannot in any way be considered a replacement for Red Hat's official recommendations to work with 3scale.
 
@@ -14,22 +13,19 @@ Porta dev-tools assume you can already run 3scale/porta locally with whatever DB
 
 A running instance of Redis is expected to be attending to port 6379, as well as a DNS resolver capable of handling wildcard domains, such as dnsmasq. These are usual requirements of 3scale/porta, but may be used as well by other components triggered with some of Porta dev-tools commands.
 
-If you are using dnsmasq, make sure to include the following two DNS records. (They will be particularly useful to run Porta along with [3scale/APIcast](https://github.com/3scale/apicast).)
+`redis-cli` is needed for `porta reset`. If you are running Redis in a container, you may create a script with that name in PATH with a content like `docker exec redis redis-cli "$@"`.
+
+For Zync, please see [Quickstart guide](https://github.com/3scale/zync/blob/master/doc/Quickstart.md) for PostgreSQL setup.
+
+If you are using dnsmasq or another DNS server locally, make sure to include the following two DNS records. They will be particularly useful to run Porta along with [3scale/APIcast](https://github.com/3scale/apicast).
 
 ```conf
-address=/example.com.local/127.0.0.1
-address=/staging.apicast.dev/127.0.0.1
+# address=/example.com/127.0.0.1 # for some old tests
+address=/.localhost/127.0.0.1
+address=/.apicast.dev/127.0.0.1 # default porta API product
 ```
 
-For [3scale/apisonator](https://github.com/3scale/apisonator), make sure to have an env file saved in your file system with the following content:
-
-```shell
-CONFIG_QUEUES_MASTER_NAME=host.docker.internal:6379/5
-CONFIG_REDIS_PROXY=host.docker.internal:6379/6
-CONFIG_INTERNAL_API_USER=system_app
-CONFIG_INTERNAL_API_PASSWORD=password
-RACK_ENV=production
-```
+For [3scale/apisonator](https://github.com/3scale/apisonator), default settings should be alright but you can modify some variables with `settings.yml` below.
 
 Apart from the aforementioned requirements, specific commands of Porta dev-tools may additionally require:
 
