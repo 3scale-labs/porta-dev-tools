@@ -50,7 +50,7 @@ module Porta
     internal_api_user: 'system_app',
     internal_api_password: 'password',
     apicast_access_token: 'apicastsecret',
-    apicast_registry_url: 'https://apicast-staging.proda.3sca.net/policies',
+    apicast_registry_url: 'https://apicast-staging.pro-saas.3sca.net/policies',
     sidekiq_prometheus_port: "9395",
     zync_prometheus_port: "9396",
     zync_authentication_token: 'zync_token',
