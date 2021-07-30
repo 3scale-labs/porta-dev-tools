@@ -508,7 +508,8 @@ module Porta
     end
 
     def ensure_dir(dir)
-      FileUtils.mkdir_p(dir) if dir && !dir.empty?
+      return if dir.to_s.empty?
+      FileUtils.mkdir_p(dir)
     end
 
     def porta_dev_tools_dir
