@@ -2,6 +2,7 @@
 
 require 'optparse'
 require 'digest/sha1'
+require 'fileutils'
 require 'yaml'
 require 'shellwords'
 require 'tempfile'
@@ -404,7 +405,9 @@ module Porta
 
     def in_porta(action = :system, envs = {}, sub: nil, &block)
       run_in_porta(sub: sub) do
-        send(action, porta_common_envs.merge(envs), with_ruby_wrapper(block.call))
+        command_env = porta_common_envs.merge(envs)
+        ensure_dir(command_env["prometheus_multiproc_dir"])
+        send(action, command_env, with_ruby_wrapper(block.call))
       end
     end
 
@@ -502,6 +505,11 @@ module Porta
       end
 
       puts "[CMD] #{cmd.join(' ')}"
+    end
+
+    def ensure_dir(dir)
+      return if dir.to_s.empty?
+      FileUtils.mkdir_p(dir)
     end
 
     def porta_dev_tools_dir
