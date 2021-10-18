@@ -528,9 +528,16 @@ module Porta
       File.expand_path(options[:threescale_operator_dir])
     end
 
+    def oracle?
+      database_adapter == :oracle
+    end
+
+    def database_adapter
+      ((options.keys & %i[mysql_db postgres_db oracle_db]).first || :mysql).to_s.delete('_db').to_sym
+    end
+
     def database_url
-      adapter = (options.keys & %i[mysql_db postgres_db oracle_db]).first || :mysql
-      options.dig(:database_url, adapter.to_s.delete('_db').to_sym)
+      options.dig(:database_url, database_adapter)
     end
 
     def stdout_log?
@@ -608,8 +615,19 @@ module Porta
   class ResetCommand < CommandRunner
     def run
       system('redis-cli flushall') || raise("redis-cli execution failed")
-      exec_in_porta { "bundle exec rails db:reset MASTER_PASSWORD=#{options[:master_password]} USER_PASSWORD=#{options[:admin_password]} ADMIN_ACCESS_TOKEN=#{options[:admin_access_token]} APICAST_ACCESS_TOKEN=#{options[:apicast_access_token]}" } || raise("db:reset in Porta failed")
+      exec_in_porta(porta_additional_envs) { "bundle exec rails db:reset" } || raise("db:reset in Porta failed")
       exec_in_zync { "bundle exec rails db:reset" } || raise("db:reset in Zync failed")
+    end
+
+    def porta_additional_envs
+      vars = {
+        'MASTER_PASSWORD' => options[:master_password],
+        "USER_PASSWORD" => options[:admin_password],
+        "ADMIN_ACCESS_TOKEN" => options[:admin_access_token],
+        "APICAST_ACCESS_TOKEN" => options[:apicast_access_token],
+      }
+      vars['ORACLE_SYSTEM_PASSWORD'] = 'threescalepass' if oracle?
+      vars
     end
   end
 
@@ -633,22 +651,23 @@ module Porta
 
   class DepsCommand < CommandRunner
     def run
-      return stop_deps if options[:deps_down]
       return status if options[:deps_status]
 
-      return run_all if options.slice(:apisonator, :apicast, :sphinx, :zync).empty?
+      op = options[:deps_down] ? "stop" : "run"
 
-      run_apisonator if options[:apisonator]
-      run_porxy && run_apicast if options[:apicast]
-      run_sphinx if options[:sphinx]
-      run_zync if options[:zync]
+      return send("#{op}_deps") if options.slice(:apisonator, :apicast, :sphinx, :zync).empty?
+
+      send("#{op}_apisonator") if options[:apisonator]
+      send("#{op}_porxy") && send("#{op}_apicast") if options[:apicast]
+      send("#{op}_sphinx") if options[:sphinx]
+      send("#{op}_zync") if options[:zync]
     end
 
     protected
 
     DOCKER_DEPS = %w[apicast porxy apisonator_worker apisonator].freeze
 
-    def run_all
+    def run_deps
       run_apisonator && run_porxy && run_apicast && run_sphinx && run_zync
     end
 
