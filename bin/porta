@@ -196,6 +196,8 @@ module Porta
 
   class ResetOptionParser < RailsEnvOptionParser; end
 
+  class InitOptionParser < RailsEnvOptionParser; end
+
   class AssetsOptionParser < RailsEnvOptionParser; end
 
   class TestOptionParser < RailsEnvOptionParser
@@ -240,6 +242,17 @@ module Porta
   class ResyncOptionParser < RailsEnvOptionParser; end
 
   class BuildOptionParser < CommandOptionParser; end
+
+  class DockerOptionParser < RailsEnvOptionParser
+    def initialize
+      super do |opts|
+        opts.on(*command_options(:reset, "Resets Porta's databases (Redis and DBMS)", '--reset'))
+        opts.on(*command_options(:init, "Initializes Porta's and Zync's databases (Redis and DBMS)", '--init'))
+        opts.on(*command_options(:stop, 'Stops porta dependencies running everything (docker also)', '--stop'))
+        opts.on(*command_options(:rm, 'Removes porta dependencies running everything in the docker', '--rm'))
+      end
+    end
+  end
 
   class PortaImageOptionParser < CommandOptionParser
     def initialize
@@ -337,6 +350,7 @@ module Porta
           server       Starts the Rails server locally
           sidekiq      Starts a Sidekiq worker locally
           reset        Resets Porta's databases (Redis and DBMS)
+          init         Initializes the Porta's and Zync's databases
           data         Generates fake data (uses the Admin API, server must be running)
           assets       Removes node_modules and precompile assets again
           test         Bundle execs a Porta's Rails test file
@@ -391,11 +405,12 @@ module Porta
     def porta_common_envs
       envs = {
         'DATABASE_URL' => database_url,
-        'TEST_ENV_NUMBER' => '0', # This is so Porta postgresql db is not the same in dev and test envs
         'APICAST_REGISTRY_URL' => options[:apicast_registry_url],
-        'prometheus_multiproc_dir' => "#{porta_dir}/tmp/metrics"
+        'prometheus_multiproc_dir' => "#{porta_dir}/tmp/metrics",
+        'ZYNC_AUTHENTICATION_TOKEN' => options[:zync_authentication_token],
       }
       envs['RAILS_LOG_TO_STDOUT'] = '1' if stdout_log?
+      envs['TEST_ENV_NUMBER'] = '0' if options.keys.include?(:postgres_db) # This is so Porta postgresql db is not the same in dev and test envs
       envs
     end
 
@@ -528,9 +543,16 @@ module Porta
       File.expand_path(options[:threescale_operator_dir])
     end
 
+    def oracle?
+      database_adapter == :oracle
+    end
+
+    def database_adapter
+      ((options.keys & %i[mysql_db postgres_db oracle_db]).first || :mysql).to_s.delete('_db').to_sym
+    end
+
     def database_url
-      adapter = (options.keys & %i[mysql_db postgres_db oracle_db]).first || :mysql
-      options.dig(:database_url, adapter.to_s.delete('_db').to_sym)
+      options.dig(:database_url, database_adapter)
     end
 
     def stdout_log?
@@ -560,6 +582,7 @@ module Porta
         "PORT" => "3000",
         "CONFIG_INTERNAL_API_USER" => options[:internal_api_user],
         "CONFIG_INTERNAL_API_PASSWORD" => options[:internal_api_password],
+        "RAILS_ENV" => 'development',
       }
     end
   end
@@ -569,19 +592,22 @@ module Porta
 
     def run
       queues_arg = queues.map { |queue| "--queue #{queue}" }
-      exec_in_porta(envs) { "bundle exec sidekiq #{queues_arg.join(' ')} -c #{concurrency}" }
+      exec_in_porta(envs) { "#{'NLS_LANG=AMERICAN_AMERICA.UTF8'} bundle exec sidekiq #{queues_arg.join(' ')} -c #{concurrency}" }
     end
 
     protected
 
     def envs
-      {
+      vars = {
+        'DATABASE_URL' => database_url,
         "CONFIG_INTERNAL_API_USER" => options[:internal_api_user],
         "CONFIG_INTERNAL_API_PASSWORD" => options[:internal_api_password],
         "ZYNC_AUTHENTICATION_TOKEN" => options[:zync_authentication_token],
         "ZYNC_ENDPOINT" => options[:zync_endpoint],
         "PROMETHEUS_EXPORTER_PORT" => options[:sidekiq_prometheus_port].to_s,
       }
+      vars['NLS_LANG'] = 'AMERICAN_AMERICA.UTF8' if oracle?
+      vars
     end
 
     def concurrency
@@ -606,10 +632,31 @@ module Porta
   end
 
   class ResetCommand < CommandRunner
+    def envs
+      vars = {
+        'MASTER_PASSWORD' => options[:master_password],
+        "USER_PASSWORD" => options[:admin_password],
+        "ADMIN_ACCESS_TOKEN" => options[:admin_access_token],
+        "ZYNC_AUTHENTICATION_TOKEN" => options[:zync_authentication_token],
+        "ZYNC_ENDPOINT" => options[:zync_endpoint],
+        "APICAST_ACCESS_TOKEN" => options[:apicast_access_token]
+      }
+      vars['NLS_LANG'] = 'AMERICAN_AMERICA.UTF8' if oracle?
+      vars['ORACLE_SYSTEM_PASSWORD'] = 'threescalepass' if oracle?
+      vars
+    end
+
     def run
       system('redis-cli flushall') || raise("redis-cli execution failed")
-      exec_in_porta { "bundle exec rails db:reset MASTER_PASSWORD=#{options[:master_password]} USER_PASSWORD=#{options[:admin_password]} ADMIN_ACCESS_TOKEN=#{options[:admin_access_token]} APICAST_ACCESS_TOKEN=#{options[:apicast_access_token]}" } || raise("db:reset in Porta failed")
-      exec_in_zync { "bundle exec rails db:reset" } || raise("db:reset in Zync failed")
+      in_porta(:system, envs) { "bundle exec rails db:reset" } || raise("db:reset in Porta failed")
+      in_zync(:system, envs)  { "bundle exec rails db:reset" } || raise("db:reset in Zync failed")
+    end
+  end
+
+  class InitCommand < ResetCommand
+    def run
+      in_porta(:system, envs) { "bundle exec rails db:setup" } || raise("db:setup in Porta failed")
+      in_zync(:system, envs) { "bundle exec rails db:setup" } || raise("db:setup in Zync failed")
     end
   end
 
@@ -931,6 +978,65 @@ module Porta
   class DataCommand < CommandRunner
     def run
       run_in_dir(porta_dev_tools_dir) { exec with_ruby_wrapper('ruby lib/fake_data.rb') }
+    end
+  end
+
+  class DockerCommand < CommandRunner
+    def run
+      return stop_containers if options[:stop]
+      return rm_containers if options[:rm]
+
+      db_option = ((options.keys & %i[mysql_db postgres_db oracle_db]).first || :mysql).to_s.delete('_db')
+      run_mysql_db if db_option == 'mysql'
+      run_oracle_db if db_option == 'oracle'
+
+      run_redis_db
+      run_postgres_db # zync
+
+      init = InitCommand.new(options)
+      sleep(20) if options[:init]
+      init.run if options[:init]
+
+      reset = ResetCommand.new(options)
+      reset.run if options[:reset]
+
+      deps = DepsCommand.new(options)
+      deps.run
+
+      sidekiq = SidekiqCommand.new(options)
+      sidekiq.run
+    end
+
+    protected
+
+    DOCKER_NAMES = %i[mysql postgres redis oracle-database]
+
+    def stop_containers
+      DOCKER_NAMES.each { |component| system("docker stop #{component} 2>/dev/null || echo \"#{component}\"") }
+      deps = DepsCommand.new(options.merge!(deps_down: true))
+      deps.run
+    end
+
+    def rm_containers
+      DOCKER_NAMES.each { |component| system("docker rm #{component} 2>/dev/null || echo \"#{component}\"") }
+    end
+
+    def run_mysql_db
+      system('docker container start mysql &>/dev/null || docker run -d -p 3306:3306 -e MYSQL_ALLOW_EMPTY_PASSWORD=true --name mysql mysql:5.7 >/dev/null && echo mysql')
+    end
+
+    def run_postgres_db
+      system('docker container start postgres &>/dev/null || docker run -d -p 5432:5432 -e POSTGRES_USER=postgres -e POSTGRES_DB=zync --name postgres circleci/postgres:10.5-alpine >/dev/null && echo postgres')
+    end
+
+    def run_oracle_db
+      run_in_porta do
+        `make oracle-database`
+      end
+    end
+
+    def run_redis_db
+      system('docker container start redis &>/dev/null || docker run -d -p 6379:6379 --name redis redis >/dev/null && echo redis')
     end
   end
 end
