@@ -237,6 +237,15 @@ module Porta
     end
   end
 
+  class ExecOptionParser < CommandOptionParser
+    def initialize
+      super do |opts|
+        opts.on(*command_options(:zync, 'Run command in Zync'))
+        opts.on(*command_options(:server, 'Run command in Server'))
+      end
+    end
+  end
+
   class ResyncOptionParser < RailsEnvOptionParser; end
 
   class BuildOptionParser < CommandOptionParser; end
@@ -337,6 +346,7 @@ module Porta
           server       Starts the Rails server locally
           sidekiq      Starts a Sidekiq worker locally
           reset        Resets Porta's databases (Redis and DBMS)
+          exec         Execute a custom shell command with component environment
           data         Generates fake data (uses the Admin API, server must be running)
           assets       Removes node_modules and precompile assets again
           test         Bundle execs a Porta's Rails test file
@@ -402,6 +412,7 @@ module Porta
     def exec_in_porta(envs = {}, sub: nil, &block)
       in_porta(:exec, envs, sub: sub, &block)
     end
+    alias exec_in_server exec_in_porta
 
     def in_porta(action = :system, envs = {}, sub: nil, &block)
       run_in_porta(sub: sub) do
@@ -797,6 +808,16 @@ module Porta
 
       printf "\nRunning:\n#{indent.call(running)}"
       printf "\nNot running:\n#{indent.call(not_running)}\n"
+    end
+  end
+
+  class ExecCommand < CommandRunner
+    def run
+      %i(server zync).each do |opt|
+        next unless options[opt]
+
+        return send("exec_in_#{opt}") { options[opt] }
+      end
     end
   end
 
