@@ -583,7 +583,7 @@ module Porta
   end
 
   class SidekiqCommand < CommandRunner
-    QUEUES = %w[backend_sync billing critical default deletion events low priority web_hooks zync].freeze
+    QUEUES = %w[backend_sync billing critical default deletion events low mailers priority web_hooks zync].freeze
 
     def run
       queues_arg = queues.map { |queue| "--queue #{queue}" }
