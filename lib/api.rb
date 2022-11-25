@@ -36,7 +36,7 @@ class Api
 
   def build_connection
     Faraday.new(endpoint, ssl: { verify_mode: OpenSSL::SSL::VERIFY_NONE }) do |faraday|
-      faraday.use Faraday::Adapter::NetHttp
+      faraday.adapter Faraday::Adapter::NetHttp
     end
   end
 
