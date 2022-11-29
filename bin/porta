@@ -401,9 +401,12 @@ module Porta
     def porta_common_envs
       envs = {
         'DATABASE_URL' => database_url,
-        'TEST_ENV_NUMBER' => '0', # This is so Porta postgresql db is not the same in dev and test envs
         'APICAST_REGISTRY_URL' => options[:apicast_registry_url],
-        'prometheus_multiproc_dir' => "#{porta_dir}/tmp/metrics"
+        'prometheus_multiproc_dir' => "#{porta_dir}/tmp/metrics",
+        # needed to setup db on postgres and mysql
+        # issue is https://github.com/rails/rails/issues/27299
+        # fixed with https://github.com/jmks/rails/commit/53e9438ef2c5a442502abd67728d172e53a075d9
+        'TEST_ENV_NUMBER' => '_discard',
       }
       envs['RAILS_LOG_TO_STDOUT'] = '1' if stdout_log?
       envs
