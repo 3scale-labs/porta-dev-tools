@@ -3,10 +3,8 @@
 settings:
   porta:
     dir: '~/workspace/porta'
-    local_provider_api: 'http://provider-admin.3scale.localhost:3000'
   zync:
     dir: '~/workspace/zync'
-    prometheus_port: "9396"
     env:
       DATABASE_URL: "postgresql://postgres:@localhost:5432/zync"
   sidekiq:
@@ -23,5 +21,3 @@ settings:
   aws_bucket: '<aws-bucket>'
   aws_region: '<aws-region>'
   apicast_registry_url: 'https://apicast-staging.pro-saas.3sca.net/policies'
-  # On Linux this should be an IP address, see porxy/README.md
-  docker_internal_host: 'host.docker.internal'
