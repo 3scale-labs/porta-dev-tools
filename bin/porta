@@ -496,8 +496,7 @@ module Porta
 
     def system(*args)
       print_command(*args)
-      Kernel.system(*args) unless options[:dryrun]
-      true
+      options[:dryrun] ? true : Kernel.system(*args)
     end
 
     def exec(*args)
@@ -629,8 +628,8 @@ module Porta
   class ResetCommand < CommandRunner
     def run
       system('redis-cli flushall') || raise("redis-cli execution failed")
-      exec_in_porta(porta_additional_envs) { "bundle exec rails db:reset" } || raise("db:reset in Porta failed")
-      exec_in_zync { "bundle exec rails db:reset" } || raise("db:reset in Zync failed")
+      in_porta(:system, porta_additional_envs) { "bundle exec rails db:reset" } || raise("db:reset in Porta failed")
+      in_zync {"bundle exec rails db:reset" } || raise("db:reset in Zync failed")
     end
 
     def porta_additional_envs
