@@ -388,7 +388,7 @@ module Porta
         hosts << "host.docker.internal"
         if `docker --version`.include?("podman")
           gw_ip = docker_internal_host
-          host_access = "--net slirp4netns:allow_host_loopback=true"
+          host_access = "--net slirp4netns:allow_host_loopback=true,enable_ipv6=false"
           if File.read("/etc/resolv.conf") =~ /nameserver\s+127\.0\.0\.1$/
             host_access += " --dns=#{gw_ip}"
           end
