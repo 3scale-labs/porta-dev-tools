@@ -87,6 +87,64 @@ module Porta
 
   module_function :settings
 
+  module Container
+    def stop_container(name)
+      system("docker stop #{name} 2>/dev/null || echo \"#{name}\"")
+    end
+  end
+
+  module Apisonator
+    include Container
+
+    def run_apisonator
+      run_apisonator_listener && run_apisonator_worker
+    end
+
+    def stop_apisonator
+      stop_apisonator_listener
+      stop_apisonator_worker
+    end
+
+    def with_apisonator_env
+      return unless block_given?
+      Tempfile.open('apisonator_env') do |f|
+        f.write apisonator_env_str
+        f.flush
+        yield f.path
+      end
+    end
+
+    def apisonator_env_str
+      env = options[:apisonator_env] || {}
+      env["CONFIG_INTERNAL_API_USER"] ||= options[:internal_api_user]
+      env["CONFIG_INTERNAL_API_PASSWORD"] ||= options[:internal_api_password]
+      env["CONFIG_QUEUES_MASTER_NAME"] ||= "#{docker_internal_host}:6379/5"
+      env["CONFIG_REDIS_PROXY"] ||= "#{docker_internal_host}:6379/6"
+      env["RACK_ENV"] ||= "production"
+      env.map { |k, v| "#{k}=#{v}" }.join("\n")
+    end
+
+    def run_apisonator_listener
+      with_apisonator_env do |env_file|
+        system("docker run -d --name apisonator --rm #{container_opts_local_hosts} -p 3001:3001 --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log >/dev/null && echo \"apisonator\"")
+      end
+    end
+
+    def run_apisonator_worker
+      with_apisonator_env do |env_file|
+        system("docker run -d --name apisonator_worker --rm #{container_opts_local_hosts} --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend_worker run >/dev/null && echo \"apisonator_worker\"")
+      end
+    end
+
+    def stop_apisonator_listener
+      stop_container("apisonator")
+    end
+
+    def stop_apisonator_worker
+      stop_container("apisonator_worker")
+    end
+  end
+
   class BaseOptionParser < ::OptionParser
     def initialize
       @options = deep_merge(DEFAULTS_OPTIONS, Porta.settings)
@@ -384,6 +442,9 @@ module Porta
     end
 
     def container_opts_local_hosts(*hosts)
+      # TODO: podman now wupports host.containers.internal hostname for this
+      #       without need for special --net option
+      #       see https://github.com/containers/podman/issues/10878
       unless macos?
         hosts << "host.docker.internal"
         if `docker --version`.include?("podman")
@@ -415,6 +476,7 @@ module Porta
     def exec_in_porta(envs = {}, sub: nil, &block)
       in_porta(:exec, envs, sub: sub, &block)
     end
+
     alias exec_in_server exec_in_porta
 
     def in_porta(action = :system, envs = {}, sub: nil, &block)
@@ -626,10 +688,26 @@ module Porta
   end
 
   class ResetCommand < CommandRunner
+    include Apisonator
+
     def run
+      reset_redis
+      reset_system
+      reset_zync
+    end
+
+    def reset_redis
       system('redis-cli flushall') || raise("redis-cli execution failed")
-      in_porta(:system, porta_additional_envs) { "bundle exec rails db:reset" } || raise("db:reset in Porta failed")
-      in_zync {"bundle exec rails db:reset" } || raise("db:reset in Zync failed")
+    end
+
+    def reset_system
+      run_apisonator_listener && in_porta(:system, porta_additional_envs) { "bundle exec rails db:reset" } || raise("db:reset in Porta failed")
+    ensure
+      stop_apisonator_listener
+    end
+
+    def reset_zync
+      in_zync { "bundle exec rails db:reset" } || raise("db:reset in Zync failed")
     end
 
     def porta_additional_envs
@@ -638,6 +716,9 @@ module Porta
         "USER_PASSWORD" => options[:admin_password],
         "ADMIN_ACCESS_TOKEN" => options[:admin_access_token],
         "APICAST_ACCESS_TOKEN" => options[:apicast_access_token],
+        # to update backend at db:seed
+        "CONFIG_INTERNAL_API_USER" => options[:internal_api_user],
+        "CONFIG_INTERNAL_API_PASSWORD" => options[:internal_api_password],
       }
       vars['ORACLE_SYSTEM_PASSWORD'] = 'threescalepass' if oracle?
       vars
@@ -663,17 +744,20 @@ module Porta
   end
 
   class DepsCommand < CommandRunner
+    include Apisonator
+    include Container
+
     def run
       return status if options[:deps_status]
 
       op = options[:deps_down] ? "stop" : "run"
 
-      return send("#{op}_deps") if options.slice(:apisonator, :apicast, :sphinx, :zync).empty?
+      all = options.slice(:apisonator, :apicast, :sphinx, :zync).empty?
 
-      send("#{op}_apisonator") if options[:apisonator]
-      send("#{op}_porxy") && send("#{op}_apicast") if options[:apicast]
-      send("#{op}_sphinx") if options[:sphinx]
-      send("#{op}_zync") if options[:zync]
+      send("#{op}_apisonator") if all || options[:apisonator]
+      send("#{op}_porxy") && send("#{op}_apicast") if all || options[:apicast]
+      send("#{op}_sphinx") if all || options[:sphinx]
+      send("#{op}_zync") if all || options[:zync]
     end
 
     protected
@@ -682,41 +766,6 @@ module Porta
 
     def run_deps
       run_apisonator && run_porxy && run_apicast && run_sphinx && run_zync
-    end
-
-    def run_apisonator
-      run_apisonator_listener && run_apisonator_worker
-    end
-
-    def with_apisonator_env
-      return unless block_given?
-      Tempfile.open('apisonator_env') do |f|
-        f.write apisonator_env_str
-        f.flush
-        yield f.path
-      end
-    end
-
-    def apisonator_env_str
-      env = options[:apisonator_env] || {}
-      env["CONFIG_INTERNAL_API_USER"] ||= options[:internal_api_user]
-      env["CONFIG_INTERNAL_API_PASSWORD"] ||= options[:internal_api_password]
-      env["CONFIG_QUEUES_MASTER_NAME"] ||= "#{docker_internal_host}:6379/5"
-      env["CONFIG_REDIS_PROXY"] ||= "#{docker_internal_host}:6379/6"
-      env["RACK_ENV"] ||= "production"
-      env.map { |k,v| "#{k}=#{v}" }.join("\n")
-    end
-
-    def run_apisonator_listener
-      with_apisonator_env do |env_file|
-        system("docker run -d --name apisonator --rm #{container_opts_local_hosts} -p 3001:3001 --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log >/dev/null && echo \"apisonator\"")
-      end
-    end
-
-    def run_apisonator_worker
-      with_apisonator_env do |env_file|
-        system("docker run -d --name apisonator_worker --rm #{container_opts_local_hosts} --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend_worker run >/dev/null && echo \"apisonator_worker\"")
-      end
     end
 
     def run_porxy
@@ -749,14 +798,12 @@ module Porta
       end
     end
 
-    def stop_deps
-      stop_docker_deps
-      stop_sphinx
-      stop_zync
+    def stop_apicast
+      stop_container("apicast")
     end
 
-    def stop_docker_deps
-      DOCKER_DEPS.each { |component| system("docker stop #{component} 2>/dev/null || echo \"#{component}\"") }
+    def stop_porxy
+      stop_container("porxy")
     end
 
     def stop_sphinx
@@ -875,7 +922,8 @@ module Porta
     end
 
     def link_private_registry_secrets
-      Timeout::timeout(30) do # checks for up to 30s if the 3scale-operator service account is available
+      Timeout::timeout(30) do
+        # checks for up to 30s if the 3scale-operator service account is available
         until system('oc get sa/3scale-operator')
           puts "retrying..."
           sleep(0.5)
