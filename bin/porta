@@ -688,8 +688,6 @@ module Porta
   end
 
   class ResetCommand < CommandRunner
-    include Apisonator
-
     def run
       reset_redis
       reset_system
@@ -702,9 +700,9 @@ module Porta
     end
 
     def reset_system
-      run_apisonator_listener && in_porta(:system, porta_additional_envs) { "bundle exec rails db:reset" } || raise("db:reset in Porta failed")
-    ensure
-      stop_apisonator_listener
+      # TODO: with run_apisonator_listener/stop_apisonator_listener we may avoid
+      #       the need to resync after the reset. But it is somehow slow.
+      in_porta(:system, porta_additional_envs) { "bundle exec rails db:reset" } || raise("db:reset in Porta failed")
     end
 
     def reset_sphinx
