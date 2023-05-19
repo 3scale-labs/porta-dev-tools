@@ -694,6 +694,7 @@ module Porta
       reset_redis
       reset_system
       reset_zync
+      reset_sphinx
     end
 
     def reset_redis
@@ -704,6 +705,10 @@ module Porta
       run_apisonator_listener && in_porta(:system, porta_additional_envs) { "bundle exec rails db:reset" } || raise("db:reset in Porta failed")
     ensure
       stop_apisonator_listener
+    end
+
+    def reset_sphinx
+      in_porta { "bundle exec rake ts:clear" } || raise("rake ts:clear failed")
     end
 
     def reset_zync
