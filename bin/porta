@@ -767,10 +767,6 @@ module Porta
 
     DOCKER_DEPS = %w[apicast porxy apisonator_worker apisonator].freeze
 
-    def run_deps
-      run_apisonator && run_porxy && run_apicast && run_sphinx && run_zync
-    end
-
     def run_porxy
       system("docker run -d --name porxy --rm #{container_opts_local_hosts "master-account.3scale.localhost"} -p 3008:3008 #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
     end
