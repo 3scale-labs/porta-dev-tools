@@ -1,12 +1,12 @@
 # Porxy
-Porxy is a porksy proxy of [porta](https://github.com/3scale/porta), a shitty solution to mediate the commnunication between [3scale/APIcast](https://github.com/3scale/APIcast), running in a docker, and [3scale/porta](https://github.com/3scale/porta), running in local environment.
+Porxy is a porksy proxy of [porta](https://github.com/3scale/porta), a shitty solution to mediate the commnunication between [3scale/APIcast](https://github.com/3scale/APIcast), running in a podman, and [3scale/porta](https://github.com/3scale/porta), running in local environment.
 
 This is extrictly for development purposes and cannot be considered a replacement for Red Hat's official recommendations to work with 3scale.
 
 ## Requirements
 Porxy assumes you can run 3scale/porta locally with whatever DBMS currently supported (MySQL, PostgreSQL, Oracle). See [installation instructions](https://github.com/3scale/porta/blob/master/INSTALL.md) for help.
 
-You should also have Docker running in your environment.
+You should also have Podman running in your environment.
 
 A Redis instance is expected to be running locally and attending to port 6379, as well as a DNS resolver capable of handling wildcard domains, such as dnsmasq.
 
@@ -30,7 +30,7 @@ You can find the IP address with one of the following commands:
 ip -4 addr show docker0 2>/dev/null | grep -Po 'inet \K[\d.]+'
 printf "%d.%d.%d.%d" $(awk '$2 == 00000000 && $7 == 00000000 { for (i = 8; i >= 2; i=i-2) { print "0x" substr($3, i-1, 2) } }' /proc/net/route)
 ```
-This needs to be changed in the apisonator env file and `config/settings.yml` (`docker_internal_host: '172.17.0.1'`)
+This needs to be changed in the apisonator env file and `config/settings.yml` (`podman_internal_host: '172.17.0.1'`)
 
 ## Parameters
 
@@ -76,8 +76,8 @@ preview:
 Prepare an env file for 3scale/apisonator:
 
 ```shell
-echo "CONFIG_QUEUES_MASTER_NAME=host.docker.internal:6379/5\n\
-CONFIG_REDIS_PROXY=host.docker.internal:6379/6\n\
+echo "CONFIG_QUEUES_MASTER_NAME=host.containers.internal:6379/5\n\
+CONFIG_REDIS_PROXY=host.containers.internal:6379/6\n\
 CONFIG_INTERNAL_API_USER=system_app\n\
 CONFIG_INTERNAL_API_PASSWORD=password\n\
 RACK_ENV=production" > <PATH_TO_APISONATOR_ENV_FILE>
@@ -94,22 +94,22 @@ CONFIG_INTERNAL_API_PASSWORD=password
 ## Run
 
 The instructions below will run:
-- [3scale/apisonator](https://github.com/3scale/apisonator) in a docker (listerner attending to port 3001 and worker)
+- [3scale/apisonator](https://github.com/3scale/apisonator) in a podman (listerner attending to port 3001 and worker)
 - [3scale/porta](https://github.com/3scale/porta) Rails server in local environment (at port 3000)
 - [3scale/porta](https://github.com/3scale/porta) Sidekiq processes in local environment
-- Porxy in a docker (listening to port 3008)
+- Porxy in a podman (listening to port 3008)
 - Staging [3scale/APIcast](https://github.com/3scale/APIcast) (listening to port 8080)
 
-### Run 3scale/apisonator in a docker
+### Run 3scale/apisonator in a podman
 
 #### Listener
 ```
-docker run -d --name apisonator --rm -p 3001:3001 --env-file <PATH_TO_APISONATOR_ENV_FILE> -it quay.io/3scale/apisonator:latest 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log
+podman run -d --name apisonator --rm -p 3001:3001 --env-file <PATH_TO_APISONATOR_ENV_FILE> -it quay.io/3scale/apisonator:latest 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log
 ```
 
 #### Worker
 ```
-docker run -d --name apisonator_worker --rm --env-file <PATH_TO_APISONATOR_ENV_FILE> -it quay.io/3scale/apisonator:latest 3scale_backend_worker run
+podman run -d --name apisonator_worker --rm --env-file <PATH_TO_APISONATOR_ENV_FILE> -it quay.io/3scale/apisonator:latest 3scale_backend_worker run
 ```
 
 ### Run 3scale/porta locally
@@ -124,14 +124,14 @@ DEV_GTLD=local UNICORN_WORKERS=8 rails s -b 0.0.0.0
 DEV_GTLD=local RAILS_MAX_THREADS=5 bundle exec rails sidekiq
 ```
 
-### Run Porxy in a docker
+### Run Porxy in a podman
 
 ```
-docker run -d --name porxy --rm -p 3008:3008 quay.io/guicassolato/porxy:latest
+podman run -d --name porxy --rm -p 3008:3008 quay.io/guicassolato/porxy:latest
 ```
 
-### Run 3scale/APIcast in a docker
+### Run 3scale/APIcast in a podman
 
 ```
-docker run -d --name apicast --rm -p 8080:8080 -e THREESCALE_PORTAL_ENDPOINT="http://<APICAST_ACCESS_TOKEN>@host.docker.internal:3008/master/api/proxy/configs" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE="http://host.docker.internal:3001" quay.io/3scale/apicast:master
+podman run -d --name apicast --rm -p 8080:8080 -e THREESCALE_PORTAL_ENDPOINT="http://<APICAST_ACCESS_TOKEN>@host.containers.internal:3008/master/api/proxy/configs" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE="http://host.containers.internal:3001" quay.io/3scale/apicast:master
 ```
