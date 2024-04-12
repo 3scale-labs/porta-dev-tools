@@ -58,7 +58,7 @@ module Porta
     zync_endpoint: 'http://127.0.0.1:5000',
     porta_local_provider_api: 'http://provider-admin.3scale.localhost:3000',
     # host/ip of localhost inside container is autodetected but one can override
-    docker_internal_host: nil,
+    podman_internal_host: nil,
     database_url: {
       mysql: 'mysql2://root:@127.0.0.1:3306/3scale_system_development',
       postgres: 'postgresql://postgres:@localhost/3scale_system_development',
@@ -89,7 +89,7 @@ module Porta
 
   module Container
     def stop_container(name)
-      system("docker stop #{name} 2>/dev/null || echo \"#{name}\"")
+      system("podman stop #{name} 2>/dev/null || echo \"#{name}\"")
     end
   end
 
@@ -118,21 +118,21 @@ module Porta
       env = options[:apisonator_env] || {}
       env["CONFIG_INTERNAL_API_USER"] ||= options[:internal_api_user]
       env["CONFIG_INTERNAL_API_PASSWORD"] ||= options[:internal_api_password]
-      env["CONFIG_QUEUES_MASTER_NAME"] ||= "#{docker_internal_host}:6379/5"
-      env["CONFIG_REDIS_PROXY"] ||= "#{docker_internal_host}:6379/6"
+      env["CONFIG_QUEUES_MASTER_NAME"] ||= "#{podman_internal_host}:6379/5"
+      env["CONFIG_REDIS_PROXY"] ||= "#{podman_internal_host}:6379/6"
       env["RACK_ENV"] ||= "production"
       env.map { |k, v| "#{k}=#{v}" }.join("\n")
     end
 
     def run_apisonator_listener
       with_apisonator_env do |env_file|
-        system("docker run -d --name apisonator --rm #{container_opts_local_hosts} -p 3001:3001 --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log >/dev/null && echo \"apisonator\"")
+        system("podman run -d --name apisonator --rm #{container_opts_local_hosts} -p 3001:3001 --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log >/dev/null && echo \"apisonator\"")
       end
     end
 
     def run_apisonator_worker
       with_apisonator_env do |env_file|
-        system("docker run -d --name apisonator_worker --rm #{container_opts_local_hosts} --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend_worker run >/dev/null && echo \"apisonator_worker\"")
+        system("podman run -d --name apisonator_worker --rm #{container_opts_local_hosts} --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend_worker run >/dev/null && echo \"apisonator_worker\"")
       end
     end
 
@@ -282,9 +282,9 @@ module Porta
     def initialize
       super do |opts|
         opts.on(*command_options(:zync_dir, 'Path to the Zync directory in the file system'))
-        opts.on(*command_options(:apisonator_image, 'Apisonator image to launch in a docker'))
-        opts.on(*command_options(:apicast_image, 'APIcast image to launch in a docker'))
-        opts.on(*command_options(:porxy_image, 'Porxy image to launch in a docker'))
+        opts.on(*command_options(:apisonator_image, 'Apisonator image to launch in a podman'))
+        opts.on(*command_options(:apicast_image, 'APIcast image to launch in a podman'))
+        opts.on(*command_options(:porxy_image, 'Porxy image to launch in a podman'))
         opts.on(*command_options(:deps_down, 'Stops porta dependencies running', '--down'))
         opts.on(*command_options(:deps_status, 'Prints status of porta dependencies running', '--status'))
         opts.on(*command_options(:apisonator, 'Runs apisonator (listener and worker)', '--apisonator'))
@@ -409,10 +409,10 @@ module Porta
           assets       Removes node_modules and precompile assets again
           test         Bundle execs a Porta's Rails test file
           cuke         Bundle execs a Porta's Cucumber test file
-          deps         Runs components that Porta depends upon – (in docker) Apisonator, APIcast and porxy; (daemonized) Zync and Sphinx
+          deps         Runs components that Porta depends upon – (in podman) Apisonator, APIcast and porxy; (daemonized) Zync and Sphinx
           resync       Resyncs Porta with Apisonator (Sidekiq and Apisonator must both be running)
           build        Builds Porta for OpenShift
-          push         Pushes latest `system-os` docker image to quay.io
+          push         Pushes latest `system-os` podman image to quay.io
           deploy       Deploys 3scale to an OpenShift devel cluster, fetching images from quay.io
           help         Prints this help
       BANNER
@@ -432,31 +432,23 @@ module Porta
 
     protected
 
-    def docker_internal_host
-      options[:docker_internal_host] ||= container_local_host_ip
+    def podman_internal_host
+      options[:podman_internal_host] ||= container_local_host_ip
     end
 
     def container_local_host_ip(image: nil)
       gw_ip_cmd = %{printf "%d.%d.%d.%d" $(awk '$2 == 00000000 && $7 == 00000000 { for (i = 8; i >= 2; i=i-2) { print "0x" substr($3, i-1, 2) } }' /proc/net/route)}
-      `docker run --rm --entrypoint /bin/bash #{image || options[:porxy_image]} -c #{gw_ip_cmd.shellescape}`
+      `podman run --rm --entrypoint /bin/bash #{image || options[:porxy_image]} -c #{gw_ip_cmd.shellescape}`
     end
 
     def container_opts_local_hosts(*hosts)
-      # TODO: podman now wupports host.containers.internal hostname for this
-      #       without need for special --net option
-      #       see https://github.com/containers/podman/issues/10878
-      unless macos?
-        hosts << "host.docker.internal"
-        if `docker --version`.include?("podman")
-          gw_ip = docker_internal_host
-          host_access = "--net slirp4netns:allow_host_loopback=true,enable_ipv6=false"
-          if File.read("/etc/resolv.conf") =~ /nameserver\s+127\.0\.0\.1$/
-            host_access += " --dns=#{gw_ip}"
-          end
-        end
+      hosts << "host.containers.internal"
+      gw_ip = podman_internal_host || 'host-gateway'
+      if File.read("/etc/resolv.conf") =~ /nameserver\s+127\.0\.0\.1$/
+        hosts.map { |h| "--add-host=#{h}:#{gw_ip} " }.join + " --dns=#{gw_ip}"
+      else
+        hosts.map { |h| "--add-host=#{h}:#{gw_ip} " }.join
       end
-      gw_ip ||= 'host-gateway'
-      hosts.map { |h| "--add-host=#{h}:#{gw_ip} " }.join + "#{host_access}"
     end
 
     def porta_common_envs
@@ -765,14 +757,14 @@ module Porta
 
     protected
 
-    DOCKER_DEPS = %w[apicast porxy apisonator_worker apisonator].freeze
+    PODMAN_DEPS = %w[apicast porxy apisonator_worker apisonator].freeze
 
     def run_porxy
-      system("docker run -d --name porxy --rm #{container_opts_local_hosts "master-account.3scale.localhost"} -p 3008:3008 #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
+      system("podman run -d --name porxy --rm #{container_opts_local_hosts "master-account.3scale.localhost"} -p 3008:3008 #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
     end
 
     def run_apicast
-      system("docker run -d --name apicast --rm -p 8080:8080 #{container_opts_local_hosts} -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@#{docker_internal_host}:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://#{docker_internal_host}:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
+      system("podman run -d --name apicast --rm -p 8080:8080 #{container_opts_local_hosts} -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@#{podman_internal_host}:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://#{podman_internal_host}:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
     end
 
     def run_sphinx
@@ -843,9 +835,9 @@ module Porta
     end
 
     def status
-      components = [*DOCKER_DEPS, 'sphinx', 'zync', 'que']
+      components = [*PODMAN_DEPS, 'sphinx', 'zync', 'que']
 
-      running = DOCKER_DEPS.reject { |component| `docker ps --filter=\"name=#{component}\" -q`.chomp.empty? }
+      running = PODMAN_DEPS.reject { |component| `podman ps --filter=\"name=#{component}\" -q`.chomp.empty? }
       running << 'sphinx' if sphinx_running?
       running << 'zync' if zync_puma_running?
       running << 'que' if zync_que_running?
@@ -884,7 +876,7 @@ module Porta
   class PushCommand < CommandRunner
     def run
       porta_image = options[:porta_image]
-      system("docker tag $(docker images -q system-os) #{porta_image}") && exec("docker push #{porta_image}")
+      system("podman tag $(podman images -q system-os) #{porta_image}") && exec("podman push #{porta_image}")
     end
   end
 
