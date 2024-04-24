@@ -1,5 +1,5 @@
 # Porxy
-Porxy is a porksy proxy of [porta](https://github.com/3scale/porta), a shitty solution to mediate the commnunication between [3scale/APIcast](https://github.com/3scale/APIcast), running in a podman, and [3scale/porta](https://github.com/3scale/porta), running in local environment.
+Porxy is a porksy proxy of [porta](https://github.com/3scale/porta), a shitty solution to mediate the commnunication between [3scale/APIcast](https://github.com/3scale/APIcast), running in a container, and [3scale/porta](https://github.com/3scale/porta), running in local environment.
 
 This is extrictly for development purposes and cannot be considered a replacement for Red Hat's official recommendations to work with 3scale.
 
@@ -94,13 +94,13 @@ CONFIG_INTERNAL_API_PASSWORD=password
 ## Run
 
 The instructions below will run:
-- [3scale/apisonator](https://github.com/3scale/apisonator) in a podman (listerner attending to port 3001 and worker)
+- [3scale/apisonator](https://github.com/3scale/apisonator) in a container (listerner attending to port 3001 and worker)
 - [3scale/porta](https://github.com/3scale/porta) Rails server in local environment (at port 3000)
 - [3scale/porta](https://github.com/3scale/porta) Sidekiq processes in local environment
-- Porxy in a podman (listening to port 3008)
+- Porxy in a container (listening to port 3008)
 - Staging [3scale/APIcast](https://github.com/3scale/APIcast) (listening to port 8080)
 
-### Run 3scale/apisonator in a podman
+### Run 3scale/apisonator in a container
 
 #### Listener
 ```
@@ -124,13 +124,13 @@ DEV_GTLD=local UNICORN_WORKERS=8 rails s -b 0.0.0.0
 DEV_GTLD=local RAILS_MAX_THREADS=5 bundle exec rails sidekiq
 ```
 
-### Run Porxy in a podman
+### Run Porxy in a container
 
 ```
 podman run -d --name porxy --rm -p 3008:3008 quay.io/guicassolato/porxy:latest
 ```
 
-### Run 3scale/APIcast in a podman
+### Run 3scale/APIcast in a container
 
 ```
 podman run -d --name apicast --rm -p 8080:8080 -e THREESCALE_PORTAL_ENDPOINT="http://<APICAST_ACCESS_TOKEN>@host.containers.internal:3008/master/api/proxy/configs" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE="http://host.containers.internal:3001" quay.io/3scale/apicast:master

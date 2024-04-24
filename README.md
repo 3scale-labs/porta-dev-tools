@@ -8,6 +8,8 @@ These are dev tools to play with [3scale/porta](https://github.com/3scale/porta)
 
 > :warning: Porta dev-tools commands and settings were tested under Mac OS X with zsh shell. You may need adapt them for your own environment.
 
+> :warning: Porta dev-tools use [Podman](https://podman.io) as the container tool by default, but it can also be used with Docker.
+
 ## Requirements
 Porta dev-tools assume you can already run 3scale/porta locally with whatever DBMS currently supported (MySQL, PostgreSQL, Oracle). See [installation instructions](https://github.com/3scale/porta/blob/master/INSTALL.md) for help.
 
@@ -29,7 +31,7 @@ For [3scale/apisonator](https://github.com/3scale/apisonator), default settings 
 
 Apart from the aforementioned requirements, specific commands of Porta dev-tools may additionally require:
 
-- Podman
+- [Podman](https://podman.io) (or another container tool)
 - [OpenShift CLI Tools](https://docs.openshift.com/container-platform/4.3/cli_reference/openshift_cli/getting-started-cli.html)
 - A clone of the [3scale/3scale-operator](https://github.com/3scale/3scale-operator) repo
 - A public OpenShift cluster where to deploy 3scale
