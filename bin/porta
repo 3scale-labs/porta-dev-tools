@@ -375,27 +375,11 @@ module Porta
     protected
 
     def docker_internal_host
-      options[:docker_internal_host] ||= container_local_host_ip
+      "127.0.0.1"
     end
 
-    def container_local_host_ip(image: nil)
-      gw_ip_cmd = %{printf "%d.%d.%d.%d" $(awk '$2 == 00000000 && $7 == 00000000 { for (i = 8; i >= 2; i=i-2) { print "0x" substr($3, i-1, 2) } }' /proc/net/route)}
-      `docker run --rm --entrypoint /bin/bash #{image || options[:porxy_image]} -c #{gw_ip_cmd.shellescape}`
-    end
-
-    def container_opts_local_hosts(*hosts)
-      unless macos?
-        hosts << "host.docker.internal"
-        if `docker --version`.include?("podman")
-          gw_ip = docker_internal_host
-          host_access = "--net slirp4netns:allow_host_loopback=true,enable_ipv6=false"
-          if File.read("/etc/resolv.conf") =~ /nameserver\s+127\.0\.0\.1$/
-            host_access += " --dns=#{gw_ip}"
-          end
-        end
-      end
-      gw_ip ||= 'host-gateway'
-      hosts.map { |h| "--add-host=#{h}:#{gw_ip} " }.join + "#{host_access}"
+    def container_opts_local_hosts
+      "--network=host"
     end
 
     def porta_common_envs
@@ -709,7 +693,7 @@ module Porta
 
     def run_apisonator_listener
       with_apisonator_env do |env_file|
-        system("docker run -d --name apisonator --rm #{container_opts_local_hosts} -p 3001:3001 --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log >/dev/null && echo \"apisonator\"")
+        system("docker run -d --name apisonator --rm #{container_opts_local_hosts} --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log >/dev/null && echo \"apisonator\"")
       end
     end
 
@@ -720,11 +704,11 @@ module Porta
     end
 
     def run_porxy
-      system("docker run -d --name porxy --rm #{container_opts_local_hosts "master-account.3scale.localhost"} -p 3008:3008 #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
+      system("docker run -d --name porxy --rm #{container_opts_local_hosts } #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
     end
 
     def run_apicast
-      system("docker run -d --name apicast --rm -p 8080:8080 #{container_opts_local_hosts} -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@#{docker_internal_host}:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://#{docker_internal_host}:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
+      system("docker run -d --name apicast --rm #{container_opts_local_hosts} -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@#{docker_internal_host}:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://#{docker_internal_host}:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
     end
 
     def run_sphinx
