@@ -8,12 +8,14 @@ These are dev tools to play with [3scale/porta](https://github.com/3scale/porta)
 
 > :warning: Porta dev-tools commands and settings were tested under Mac OS X with zsh shell. You may need adapt them for your own environment.
 
+> :warning: Porta dev-tools use [Podman](https://podman.io) as the container tool by default, but it can also be used with Docker.
+
 ## Requirements
 Porta dev-tools assume you can already run 3scale/porta locally with whatever DBMS currently supported (MySQL, PostgreSQL, Oracle). See [installation instructions](https://github.com/3scale/porta/blob/master/INSTALL.md) for help.
 
 A running instance of Redis is expected to be attending to port 6379, as well as a DNS resolver capable of handling wildcard domains, such as dnsmasq. These are usual requirements of 3scale/porta, but may be used as well by other components triggered with some of Porta dev-tools commands.
 
-`redis-cli` is needed for `porta reset`. If you are running Redis in a container, you may create a script with that name in PATH with a content like `docker exec redis redis-cli "$@"`.
+`redis-cli` is needed for `porta reset`. If you are running Redis in a container, you may create a script with that name in PATH with a content like `podman exec redis redis-cli "$@"`.
 
 For Zync, please see [Quickstart guide](https://github.com/3scale/zync/blob/master/doc/Quickstart.md) for PostgreSQL setup.
 
@@ -29,7 +31,7 @@ For [3scale/apisonator](https://github.com/3scale/apisonator), default settings 
 
 Apart from the aforementioned requirements, specific commands of Porta dev-tools may additionally require:
 
-- Docker
+- [Podman](https://podman.io) (or another container tool)
 - [OpenShift CLI Tools](https://docs.openshift.com/container-platform/4.3/cli_reference/openshift_cli/getting-started-cli.html)
 - A clone of the [3scale/3scale-operator](https://github.com/3scale/3scale-operator) repo
 - A public OpenShift cluster where to deploy 3scale
@@ -68,10 +70,10 @@ porta CMD [options]
 | assets   | Removes node_modules and precompile assets again                                                                  |
 | test     | Bundle execs a Porta's Rails test file                                                                            |
 | cuke     | Bundle execs a Porta's Cucumber test file                                                                         |
-| deps     | Runs components that Porta depends upon – (in docker) Apisonator, APIcast and porxy; (daemonized) Zync and Sphinx |
+| deps     | Runs components that Porta depends upon – (in podman) Apisonator, APIcast and porxy; (daemonized) Zync and Sphinx |
 | resync   | Resyncs Porta with Apisonator (Sidekiq and Apisonator must both be running)                                       |
 | build    | Builds Porta for OpenShift                                                                                        |
-| push     | Pushes latest `system-os` docker image to quay.io                                                                 |
+| push     | Pushes latest `system-os` podman image to quay.io                                                                 |
 | deploy   | Deploys 3scale to an OpenShift devel cluster, fetching images from quay.io                                        |
 | help     | Prints the list of available commands                                                                             |
 
