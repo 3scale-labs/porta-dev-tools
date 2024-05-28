@@ -240,9 +240,27 @@ module Porta
     end
   end
 
-  class ServerOptionParser < RailsEnvOptionParser; end
+  class CustomRailsCommandOptionParser < RailsEnvOptionParser
+    def parse!
+      super
 
-  class SidekiqOptionParser < RailsEnvOptionParser
+      # this is custom command to run in the environment instead of the default one
+      unless ARGV.empty?
+        options[:custom_command] = ARGV.dup.freeze
+        ARGV.clear
+      end
+
+      options
+    end
+
+    def banner
+      super.sub(/^\s*Usage:.*$/, "\\0 [-- CUSTOM_CMD ARG1 ... ARGN]")
+    end
+  end
+
+  class ServerOptionParser < CustomRailsCommandOptionParser; end
+
+  class SidekiqOptionParser < CustomRailsCommandOptionParser
     def initialize
       super do |opts|
         opts.on(*command_options(:concurrency, 'Number of threads (default: 2)'))
@@ -260,7 +278,7 @@ module Porta
     def initialize
       super
 
-      return if ARGV[1] && !ARGV[1].start_with?('-')
+      return if ARGV[0] && !ARGV[0].start_with?('-')
       puts self
       exit 128
     end
@@ -534,6 +552,7 @@ module Porta
     end
 
     def with_ruby_wrapper(cmd)
+      cmd = cmd.map(&:shellescape).join(" ") if cmd.is_a?(Array)
       case
       when find_executable0('rbenv')
         with_rbenv(cmd)
@@ -631,11 +650,19 @@ module Porta
     end
   end
 
-  class ServerCommand < CommandRunner
+  class PortaCommand < CommandRunner
     def run
-      exec_in_porta(envs) { 'rails server -b 0.0.0.0' }
+      exec_in_porta(envs) { command }
     end
 
+    private
+
+    def command
+      options[:custom_command] || default_command
+    end
+  end
+
+  class ServerCommand < PortaCommand
     protected
 
     def envs
@@ -647,15 +674,16 @@ module Porta
         "CONFIG_INTERNAL_API_PASSWORD" => options[:internal_api_password],
       }
     end
+
+    private
+
+    def default_command
+      "rails server -b 0.0.0.0"
+    end
   end
 
-  class SidekiqCommand < CommandRunner
+  class SidekiqCommand < PortaCommand
     QUEUES = %w[backend_sync billing critical default deletion events low mailers priority web_hooks zync].freeze
-
-    def run
-      queues_arg = queues.map { |queue| "--queue #{queue}" }
-      exec_in_porta(envs) { "bundle exec sidekiq #{queues_arg.join(' ')} -c #{concurrency}" }
-    end
 
     protected
 
@@ -687,6 +715,13 @@ module Porta
 
     def only_queues
       options[:queues]&.split(',') || []
+    end
+
+    private
+
+    def default_command
+      queues_arg = queues.map { |queue| "--queue #{queue}" }
+      "bundle exec sidekiq #{queues_arg.join(' ')} -c #{concurrency}"
     end
   end
 
@@ -1027,9 +1062,11 @@ module Porta
   end
 end
 
-command = ARGV.first&.capitalize
+command = ARGV.shift
+command = "help" if !command || %w[--help -h].include?(command)
+command = command.capitalize
 option_parser_class = begin
-  Porta.const_get("#{command || Help}OptionParser".to_sym)
+  Porta.const_get("#{command}OptionParser".to_sym)
 rescue NameError => exception
   Porta::HelpOptionParser if exception.message =~ /uninitialized constant/ or raise
 end
