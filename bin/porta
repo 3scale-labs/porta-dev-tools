@@ -482,7 +482,7 @@ module Porta
     end
 
     def slirp4netns_arg
-      return @slirp4netns if defined @slirp4netns
+      return @slirp4netns if defined? @slirp4netns
 
       @slirp4netns = podman? && need_to_add_internal_hosts? ? "--net slirp4netns:allow_host_loopback=true,enable_ipv6=false" : ""
     end
