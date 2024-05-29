@@ -451,29 +451,49 @@ module Porta
     protected
 
     def podman?
-      system('podman --version > /dev/null 2>&1')
+      return @podman if defined? @podman
+
+      @podman = system('podman --version > /dev/null 2>&1')
+    end
+
+    def need_to_add_internal_hosts?
+      return @need_to_add_internal_hosts if defined? @need_to_add_internal_hosts
+
+      @need_to_add_internal_hosts = !system("#{container_tool} run --rm --entrypoint /bin/bash #{options[:porxy_image]} -c 'getent ahostsv4 #{container_default_internal_host} > /dev/null'")
     end
 
     def container_tool
       @container_tool ||= podman? ? 'podman' : 'docker'
     end
 
+     def container_default_internal_host
+      @container_internal_host ||= podman? ? "host.containers.internal" : "host.docker.internal"
+    end
+
     def container_internal_host
-      options[:container_internal_host] ||= container_local_host_ip
+      options[:container_internal_host] ||= need_to_add_internal_hosts? ? container_default_gw : container_default_internal_host
     end
 
-    def container_local_host_ip(image: nil)
-      gw_ip_cmd = %{printf "%d.%d.%d.%d" $(awk '$2 == 00000000 && $7 == 00000000 { for (i = 8; i >= 2; i=i-2) { print "0x" substr($3, i-1, 2) } }' /proc/net/route)}
-      `#{container_tool} run --rm --entrypoint /bin/bash #{image || options[:porxy_image]} -c #{gw_ip_cmd.shellescape}`
+    # with docker and podman/slirp4netns the returned gw is the host OS
+    # on podman/pasta though, this is the local network gw so not really useful
+    def container_default_gw(image: nil)
+      gw_ip_cmd = %{printf "%d.%d.%d.%d" $(awk '$2 == 00000000 && $8 == 00000000 { for (i = 8; i >= 2; i=i-2) { print "0x" substr($3, i-1, 2) } }' /proc/net/route)}
+      `#{container_tool} run #{slirp4netns_arg} --rm --entrypoint /bin/bash #{image || options[:porxy_image]} -c #{gw_ip_cmd.shellescape}`
     end
 
+    def slirp4netns_arg
+      return @slirp4netns if defined? @slirp4netns
+
+      @slirp4netns = podman? && need_to_add_internal_hosts? ? "--net slirp4netns:allow_host_loopback=true,enable_ipv6=false" : ""
+    end
+
+    # this would hopefully work with podman 4 and docker but not tested
     def container_opts_local_hosts(*hosts)
-      hosts << "host.containers.internal"
+      return "" unless need_to_add_internal_hosts?
+
+      hosts << "host.containers.internal" << "host.docker.internal"
       gw_ip = container_internal_host || 'host-gateway'
-      host_access = ''
-      if !macos?
-        host_access += "--net slirp4netns:allow_host_loopback=true,enable_ipv6=false"
-      end
+      host_access = slirp4netns_arg.dup
       if File.read("/etc/resolv.conf") =~ /nameserver\s+127\.0\.0\.1$/
         host_access += " --dns=#{gw_ip}"
       end
