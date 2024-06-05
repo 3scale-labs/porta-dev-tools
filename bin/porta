@@ -844,13 +844,13 @@ module Porta
     end
 
     def run_zync_puma
-      in_zync(:system, 'PROMETHEUS_EXPORTER_PORT' => "#{options[:zync_prometheus_port]}") do
+      in_zync(:system, {'PROMETHEUS_EXPORTER_PORT' => "#{options[:zync_prometheus_port]}"}) do
         "bundle exec rails server -p 5000 &>#{zync_dir}/log/development.log & echo zync"
       end
     end
 
     def run_zync_que
-      in_zync(:system, 'PROMETHEUS_EXPORTER_PORT' => "#{options[:zync_prometheus_port]}") do
+      in_zync(:system, {'PROMETHEUS_EXPORTER_PORT' => "#{options[:zync_prometheus_port]}"}) do
         "bundle exec que &>#{zync_dir}/log/development.log & echo que"
       end
     end
