@@ -1,8 +1,7 @@
 # Porta dev-tools
-These are dev tools to play with [3scale/porta](https://github.com/3scale/porta) in local environment. They include:
+These are dev tools to play with [3scale/porta](https://github.com/3scale/porta) in local environment. Presently this is:
 
 1. a CLI to ease commands such as starting the Rails server, launch dependencies, deploy to OpenShift, etc (see the [full list](#supported-commands) of commands)
-2. [Porxy](porxy/README.md), a porksy reverse proxy to porta. Because [APIcast](https://github.com/3scale/apicast) has it's own DNS resolution that we can't override with `/etc/hosts`, we need this reverse proxy.
 
 > :warning: Porta dev-tools are for development purposes and cannot in any way be considered a replacement for Red Hat's official recommendations to work with 3scale.
 
@@ -70,7 +69,7 @@ porta CMD [options]
 | assets   | Removes node_modules and precompile assets again                                                                  |
 | test     | Bundle execs a Porta's Rails test file                                                                            |
 | cuke     | Bundle execs a Porta's Cucumber test file                                                                         |
-| deps     | Runs components that Porta depends upon – (in podman) Apisonator, APIcast and porxy; (daemonized) Zync and Sphinx |
+| deps     | Runs components that Porta depends upon – (in podman) Apisonator and APIcast; (daemonized) Zync and Sphinx/Manticore |
 | resync   | Resyncs Porta with Apisonator (Sidekiq and Apisonator must both be running)                                       |
 | build    | Builds Porta for OpenShift                                                                                        |
 | push     | Pushes latest `system-os` podman image to quay.io                                                                 |
