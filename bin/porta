@@ -34,7 +34,7 @@ module Porta
     apisonator_image: 'quay.io/3scale/apisonator:latest',
     apicast_image: 'quay.io/3scale/apicast:latest',
     zync_image: 'quay.io/3scale/zync:nightly',
-    # porxy_image: 'quay.io/guicassolato/porxy:latest',
+    porxy_image: 'quay.io/guicassolato/porxy:latest',
     memcached_image: 'registry.redhat.io/3scale-amp20/memcached',
     cluster_endpoint: nil,
     wildcard_domain: nil,
@@ -303,7 +303,7 @@ module Porta
         opts.on(*command_options(:zync_dir, 'Path to the Zync directory in the file system'))
         opts.on(*command_options(:apisonator_image, 'Apisonator image to launch in a container'))
         opts.on(*command_options(:apicast_image, 'APIcast image to launch in a container'))
-        # opts.on(*command_options(:porxy_image, 'Porxy image to launch in a container'))
+        opts.on(*command_options(:porxy_image, 'Porxy image to launch in a container'))
         opts.on(*command_options(:deps_down, 'Stops porta dependencies running', '--down'))
         opts.on(*command_options(:deps_status, 'Prints status of porta dependencies running', '--status'))
         opts.on(*command_options(:apisonator, 'Runs apisonator (listener and worker)', '--apisonator'))
@@ -843,22 +843,22 @@ module Porta
       all = options.slice(:apisonator, :apicast, :sphinx, :zync).empty?
 
       send("#{op}_apisonator") if all || options[:apisonator]
-      # send("#{op}_porxy") && send("#{op}_apicast") if all || options[:apicast]
-      send("#{op}_apicast") if all || options[:apicast]
+      send("#{op}_porxy") && send("#{op}_apicast") if all || options[:apicast]
+      # send("#{op}_apicast") if all || options[:apicast]
       send("#{op}_sphinx") if all || options[:sphinx]
       send("#{op}_zync") if all || options[:zync]
     end
 
     protected
 
-    CONTAINER_DEPS = %w[apicast apisonator_worker apisonator].freeze
+    CONTAINER_DEPS = %w[apicast porxy apisonator_worker apisonator].freeze
 
-    # def run_porxy
-    #   system("#{container_tool} run -d --name porxy --rm #{container_opts_local_hosts "master-account.3scale.localhost"} -p 3008:3008 #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
-    # end
+    def run_porxy
+      system("#{container_tool} run -d --name porxy --rm #{container_opts_local_hosts "master-account.3scale.localhost"} -p 3008:3008 #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
+    end
 
     def run_apicast
-      system("#{container_tool} run -d --name apicast --rm -p 8080:8080 #{container_opts_local_hosts} -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@master-account.3scale.localhost:3000/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://#{container_internal_host}:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
+      system("#{container_tool} run -d --name apicast --rm -p 8080:8080 #{container_opts_local_hosts} -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@#{container_internal_ip}:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://#{container_internal_host}:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
     end
 
     def run_sphinx
@@ -887,9 +887,9 @@ module Porta
       stop_container("apicast")
     end
 
-    # def stop_porxy
-    #   stop_container("porxy")
-    # end
+    def stop_porxy
+      stop_container("porxy")
+    end
 
     def stop_sphinx
       return puts 'sphinx' unless sphinx_running?
