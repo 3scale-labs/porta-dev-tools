@@ -1,5 +1,6 @@
 #!/usr/bin/env ruby
 
+require 'ipaddr'
 require 'optparse'
 require 'digest/sha1'
 require 'fileutils'
@@ -52,6 +53,7 @@ module Porta
     internal_api_password: 'password',
     apicast_access_token: 'apicastsecret',
     apicast_registry_url: 'https://apicast-staging.pro-saas.3sca.net/policies',
+    porta_master_host: 'master-account.3scale.localhost',
     sidekiq_prometheus_port: "9395",
     zync_prometheus_port: "9396",
     zync_authentication_token: 'zync_token',
@@ -126,13 +128,13 @@ module Porta
 
     def run_apisonator_listener
       with_apisonator_env do |env_file|
-        system("#{container_tool} run -d --name apisonator --rm #{container_opts_local_hosts} -p 3001:3001 --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log >/dev/null && echo \"apisonator\"")
+        system("#{container_tool} run -d --name apisonator --rm -p 3001:3001 --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log >/dev/null && echo \"apisonator\"")
       end
     end
 
     def run_apisonator_worker
       with_apisonator_env do |env_file|
-        system("#{container_tool} run -d --name apisonator_worker --rm #{container_opts_local_hosts} --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend_worker run >/dev/null && echo \"apisonator_worker\"")
+        system("#{container_tool} run -d --name apisonator_worker --rm --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend_worker run >/dev/null && echo \"apisonator_worker\"")
       end
     end
 
@@ -306,7 +308,7 @@ module Porta
         opts.on(*command_options(:deps_down, 'Stops porta dependencies running', '--down'))
         opts.on(*command_options(:deps_status, 'Prints status of porta dependencies running', '--status'))
         opts.on(*command_options(:apisonator, 'Runs apisonator (listener and worker)', '--apisonator'))
-        opts.on(*command_options(:apicast, 'Runs APIcast (with Porxy)', '--apicast'))
+        opts.on(*command_options(:apicast, 'Runs APIcast', '--apicast'))
         opts.on(*command_options(:sphinx, 'Runs Sphinx', '--sphinx'))
         opts.on(*command_options(:zync, 'Runs Zync and Zync Que', '--zync'))
       end
@@ -427,7 +429,7 @@ module Porta
           assets       Removes node_modules and precompile assets again
           test         Bundle execs a Porta's Rails test file
           cuke         Bundle execs a Porta's Cucumber test file
-          deps         Runs components that Porta depends upon – (in a container) Apisonator, APIcast and porxy; (daemonized) Zync and Sphinx
+          deps         Runs components that Porta depends upon – (in a container) Apisonator and APIcast; (daemonized) Zync and Sphinx
           resync       Resyncs Porta with Apisonator (Sidekiq and Apisonator must both be running)
           build        Builds Porta for OpenShift
           push         Pushes latest `system-os` container image to quay.io
@@ -456,12 +458,6 @@ module Porta
       @podman = system('podman --version > /dev/null 2>&1')
     end
 
-    def need_to_add_internal_hosts?
-      return @need_to_add_internal_hosts if defined? @need_to_add_internal_hosts
-
-      @need_to_add_internal_hosts = !system("#{container_tool} run --rm --entrypoint /bin/bash #{options[:porxy_image]} -c 'getent ahostsv4 #{container_default_internal_host} > /dev/null'")
-    end
-
     def container_tool
       @container_tool ||= podman? ? 'podman' : 'docker'
     end
@@ -470,34 +466,21 @@ module Porta
       @container_internal_host ||= podman? ? "host.containers.internal" : "host.docker.internal"
     end
 
-    def container_internal_host
-      options[:container_internal_host] ||= need_to_add_internal_hosts? ? container_default_gw : container_default_internal_host
-    end
+    def container_internal_ip
+      return @container_internal_ip if defined? @container_internal_ip
 
-    # with docker and podman/slirp4netns the returned gw is the host OS
-    # on podman/pasta though, this is the local network gw so not really useful
-    def container_default_gw(image: nil)
-      gw_ip_cmd = %{printf "%d.%d.%d.%d" $(awk '$2 == 00000000 && $8 == 00000000 { for (i = 8; i >= 2; i=i-2) { print "0x" substr($3, i-1, 2) } }' /proc/net/route)}
-      `#{container_tool} run #{slirp4netns_arg} --rm --entrypoint /bin/bash #{image || options[:porxy_image]} -c #{gw_ip_cmd.shellescape}`
-    end
-
-    def slirp4netns_arg
-      return @slirp4netns if defined? @slirp4netns
-
-      @slirp4netns = podman? && need_to_add_internal_hosts? ? "--net slirp4netns:allow_host_loopback=true,enable_ipv6=false" : ""
-    end
-
-    # this would hopefully work with podman 4 and docker but not tested
-    def container_opts_local_hosts(*hosts)
-      return "" unless need_to_add_internal_hosts?
-
-      hosts << "host.containers.internal" << "host.docker.internal"
-      gw_ip = container_internal_host || 'host-gateway'
-      host_access = slirp4netns_arg.dup
-      if File.read("/etc/resolv.conf") =~ /nameserver\s+127\.0\.0\.1$/
-        host_access += " --dns=#{gw_ip}"
+      container_internal_ip = `#{container_tool} run --rm --entrypoint /bin/bash #{options[:apicast_image]} -c 'getent ahostsv4 #{container_default_internal_host} | awk \"{ print \\$1; exit }\"'`.strip
+      if container_internal_ip.empty?
+        @container_internal_ip = nil
+      else
+        IPAddr.new(container_internal_ip)
+        @container_internal_ip = container_internal_ip
       end
-      hosts.map { |h| "--add-host=#{h}:#{gw_ip} " }.join + host_access
+    end
+
+    # @return [String] hostname or IP to access the container host
+    def container_internal_host
+      options[:container_internal_host] ||= container_default_internal_host
     end
 
     def porta_common_envs
@@ -817,6 +800,7 @@ module Porta
 
       send("#{op}_apisonator") if all || options[:apisonator]
       send("#{op}_porxy") && send("#{op}_apicast") if all || options[:apicast]
+      # send("#{op}_apicast") if all || options[:apicast]
       send("#{op}_sphinx") if all || options[:sphinx]
       send("#{op}_zync") if all || options[:zync]
     end
@@ -826,11 +810,11 @@ module Porta
     CONTAINER_DEPS = %w[apicast porxy apisonator_worker apisonator].freeze
 
     def run_porxy
-      system("#{container_tool} run -d --name porxy --rm #{container_opts_local_hosts "master-account.3scale.localhost"} -p 3008:3008 #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
+      system("#{container_tool} run -d --name porxy --rm --add-host=#{options[:porta_master_host]}:host-gateway -p 3008:3008 #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
     end
 
     def run_apicast
-      system("#{container_tool} run -d --name apicast --rm -p 8080:8080 #{container_opts_local_hosts} -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@#{container_internal_host}:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://#{container_internal_host}:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
+      system("#{container_tool} run -d --name apicast --rm -p 8080:8080 -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@#{container_internal_ip}:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://#{container_internal_ip}:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
     end
 
     def run_sphinx
