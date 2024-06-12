@@ -127,13 +127,13 @@ module Porta
 
     def run_apisonator_listener
       with_apisonator_env do |env_file|
-        system("#{container_tool} run -d --name apisonator --rm #{container_opts_local_hosts} -p 3001:3001 --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log >/dev/null && echo \"apisonator\"")
+        system("#{container_tool} run -d --name apisonator --rm #{container_runtime_opts} -p 3001:3001 --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend start -p 3001 -l /var/log/backend/3scale_backend.log >/dev/null && echo \"apisonator\"")
       end
     end
 
     def run_apisonator_worker
       with_apisonator_env do |env_file|
-        system("#{container_tool} run -d --name apisonator_worker --rm #{container_opts_local_hosts} --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend_worker run >/dev/null && echo \"apisonator_worker\"")
+        system("#{container_tool} run -d --name apisonator_worker --rm #{container_runtime_opts} --env-file #{env_file} -it #{options[:apisonator_image]} 3scale_backend_worker run >/dev/null && echo \"apisonator_worker\"")
       end
     end
 
@@ -307,7 +307,7 @@ module Porta
         opts.on(*command_options(:deps_down, 'Stops porta dependencies running', '--down'))
         opts.on(*command_options(:deps_status, 'Prints status of porta dependencies running', '--status'))
         opts.on(*command_options(:apisonator, 'Runs apisonator (listener and worker)', '--apisonator'))
-        opts.on(*command_options(:apicast, 'Runs APIcast', '--apicast'))
+        opts.on(*command_options(:apicast, 'Runs APIcast (with Porxy)', '--apicast'))
         opts.on(*command_options(:sphinx, 'Runs Sphinx', '--sphinx'))
         opts.on(*command_options(:zync, 'Runs Zync and Zync Que', '--zync'))
       end
@@ -428,7 +428,7 @@ module Porta
           assets       Removes node_modules and precompile assets again
           test         Bundle execs a Porta's Rails test file
           cuke         Bundle execs a Porta's Cucumber test file
-          deps         Runs components that Porta depends upon – (in a container) Apisonator and APIcast; (daemonized) Zync and Sphinx
+          deps         Runs components that Porta depends upon – (in a container) Apisonator, APIcast and porxy; (daemonized) Zync and Sphinx
           resync       Resyncs Porta with Apisonator (Sidekiq and Apisonator must both be running)
           build        Builds Porta for OpenShift
           push         Pushes latest `system-os` container image to quay.io
@@ -457,6 +457,9 @@ module Porta
       @podman = system('podman --version > /dev/null 2>&1')
     end
 
+    # On Podman 4 and some docker installations neither host.containers.internal nor
+    #   host.docker.internal are not setup within the container.
+    # @return [Boolean] whether host.containers.internal or host.docker.internal are supported by the container runtime
     def need_to_add_internal_hosts?
       return @need_to_add_internal_hosts if defined? @need_to_add_internal_hosts
 
@@ -483,48 +486,89 @@ module Porta
       end
     end
 
-    # @return [String] hostname or IP to access the container host
+    # @return [String] the IP that --add-host=somehostname:host-gateway option would produce inside a container
+    def container_internal_ip_from_host_gateway
+      return @container_internal_ip_from_host_gateway if @container_internal_ip_from_host_gateway
+
+      container_internal_ip_from_host_gateway = `#{container_tool} run --rm --add-host=trialhost:host-gateway --entrypoint /bin/bash #{options[:apicast_image]} -c 'getent ahostsv4 trialhost | awk \"{ print \\$1; exit }\"'`.strip
+      IPAddr.new(container_internal_ip_from_host_gateway)
+      @container_internal_ip_from_host_gateway = container_internal_ip_from_host_gateway
+    end
+
+    # @return [String] hostname or IP address to access the container host
     def container_internal_host
       options[:container_internal_host] ||= need_to_add_internal_hosts? ? container_default_gw : container_default_internal_host
     end
 
-    # @return [String] ip
+    # @return [String] IP address to access the container host
     def container_internal_ip
-      @container_internal_ip ||= need_to_add_internal_hosts? ? container_default_gw : container_default_internal_ip
+      @container_internal_ip ||= if need_to_add_internal_hosts?
+        if host_gateway_supported?
+          container_internal_ip_from_host_gateway
+        else
+          container_default_gw # last resort, it assumes we are running on Podman 4 in slirp4netns rootless default network mode
+        end
+      else
+        container_default_internal_ip
+      end
     end
 
-    # with docker and podman/slirp4netns the returned gw is the host OS
-    # on podman/pasta though, this is the local network gw so not really useful
+    # With docker and podman/slirp4netns the returned gw is an IP of the host OS
+    # on podman/pasta though, this is the local OS network gw so not really useful
+    # @return [String] IP address of default gateway from within the container
     def container_default_gw(image: nil)
       gw_ip_cmd = %{printf "%d.%d.%d.%d" $(awk '$2 == 00000000 && $8 == 00000000 { for (i = 8; i >= 2; i=i-2) { print "0x" substr($3, i-1, 2) } }' /proc/net/route)}
-      `#{container_tool} run #{slirp4netns_arg} --rm --entrypoint /bin/bash #{image || options[:apicast_image]} -c #{gw_ip_cmd.shellescape}`
+      `#{container_tool} run #{container_slirp4netns_arg} --rm --entrypoint /bin/bash #{image || options[:apicast_image]} -c #{gw_ip_cmd.shellescape}`
     end
 
-    def slirp4netns_arg
+    # @return [String] necessary slirp4netns
+    # @note `need_to_add_internal_hosts?` ensures this will only be non-blank on Podman 4 and earlier
+    def container_slirp4netns_arg
       return @slirp4netns if defined? @slirp4netns
 
       @slirp4netns = podman? && need_to_add_internal_hosts? ? "--net slirp4netns:allow_host_loopback=true,enable_ipv6=false" : ""
     end
 
-    # this would hopefully work with podman 4 and docker but not tested
-    def container_opts_local_hosts(*hosts)
-      if macos? && !podman?
-        # should work for --add-host but not tested for --dns
-        gw_spec = 'host-gateway'
-      else
-        gw_spec = container_internal_ip
-      end
+    # @return [Boolean] whether container runtime supports the option --add-host=some.example.com:host-gateway
+    def host_gateway_supported?
+      return @host_gateway_supported if defined? @host_gateway_supported
 
-      unless need_to_add_internal_hosts?
+      @host_gateway_supported = system("#{container_tool} run --rm --add-host=trialhost:host-gateway --entrypoint /bin/true #{options[:apicast_image]}")
+    end
+
+    # @return [String] the ip or magic value that we should use in `--add-host=target.hostname:ip_or_magic_value`
+    def container_add_host_target
+      @container_add_host_target ||= host_gateway_supported? ? "host-gateway" : container_internal_ip
+    end
+
+    # @return [String] the --add-hosts options needed to start containers
+    def container_add_hosts_arg
+      return @container_add_hosts_arg if @container_add_hosts_arg
+
+      hosts = []
+      hosts << "master-account.3scale.localhost" # TODO: make this configuration once porxy supports a dynamic value
+
+      if need_to_add_internal_hosts?
         hosts << "host.containers.internal" << "host.docker.internal"
-        host_access = slirp4netns_arg.dup
-        if File.read("/etc/resolv.conf") =~ /nameserver\s+127\.0\.0\.1$/
-          host_access += " --dns=#{gw_spec}" # this is not needed and may break old podman in `host` network mode
-        end
       end
 
-      hosts << "master-account.3scale.localhost"
-      hosts.map { |h| "--add-host=#{h}:#{gw_spec} " }.join + host_access.to_s
+      @container_add_hosts_arg = hosts.map { |h| "--add-host=#{h}:#{container_add_host_target}" }.join(" ")
+    end
+
+    # When podman sees 127.0.0.1 it removes it and replaces with default values if no other nameservers are in the file.
+    #   see: https://github.com/containers/podman/issues/3277#issuecomment-499924888
+    # @return [String] the necessary `--dns` arg to run containers when local resolver is used
+    def container_dns_arg
+      @container_dns_arg ||= if File.read("/etc/resolv.conf") =~ /^\s*nameserver\s+127\.0\.0\.1$/
+        "--dns=#{container_internal_ip}"
+      else
+        ""
+      end
+    end
+
+    # this would hopefully work with podman 4 and docker but not tehost_gateway_supportedsted
+    def container_runtime_opts
+      "#{container_slirp4netns_arg} #{container_dns_arg} #{container_add_hosts_arg}"
     end
 
     def porta_common_envs
@@ -854,11 +898,11 @@ module Porta
     CONTAINER_DEPS = %w[apicast porxy apisonator_worker apisonator].freeze
 
     def run_porxy
-      system("#{container_tool} run -d --name porxy --rm #{container_opts_local_hosts "master-account.3scale.localhost"} -p 3008:3008 #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
+      system("#{container_tool} run -d --name porxy --rm #{container_runtime_opts} -p 3008:3008 #{options[:porxy_image]} >/dev/null && echo \"porxy\"")
     end
 
     def run_apicast
-      system("#{container_tool} run -d --name apicast --rm -p 8080:8080 #{container_opts_local_hosts} -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@#{container_internal_ip}:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://#{container_internal_host}:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
+      system("#{container_tool} run -d --name apicast --rm -p 8080:8080 #{container_runtime_opts} -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@#{container_internal_ip}:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://#{container_internal_ip}:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
     end
 
     def run_sphinx
