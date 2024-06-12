@@ -858,7 +858,7 @@ module Porta
     end
 
     def run_apicast
-      system("#{container_tool} run -d --name apicast --rm -p 8080:8080 #{container_opts_local_hosts} -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@#{container_internal_ip}:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://#{container_internal_host}:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
+      system("#{container_tool} run -d --name apicast --rm -p 8080:8080 #{container_opts_local_hosts} -e THREESCALE_PORTAL_ENDPOINT=\"http://#{options[:apicast_access_token]}@#{container_internal_ip}:3008/master/api/proxy/configs\" -e THREESCALE_DEPLOYMENT_ENV=staging -e BACKEND_ENDPOINT_OVERRIDE=\"http://#{container_internal_ip}:3001\" #{options[:apicast_image]} >/dev/null && echo \"apicast\"")
     end
 
     def run_sphinx
