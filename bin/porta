@@ -451,6 +451,7 @@ module Porta
 
     protected
 
+    # @note this method will not be needed if we start supporting only Podman 5
     def podman?
       return @podman if defined? @podman
 
@@ -460,16 +461,19 @@ module Porta
     # On Podman 4 and some docker installations neither host.containers.internal nor
     #   host.docker.internal are not setup within the container.
     # @return [Boolean] whether host.containers.internal or host.docker.internal are supported by the container runtime
+    # @note this method will not be needed if we start supporting only Podman 5
     def need_to_add_internal_hosts?
       return @need_to_add_internal_hosts if defined? @need_to_add_internal_hosts
 
       @need_to_add_internal_hosts = !container_default_internal_ip
     end
 
+    # @note this method will not be needed if we start supporting only Podman 5
     def container_tool
       @container_tool ||= podman? ? 'podman' : 'docker'
     end
 
+    # @note this method will not be needed if we start supporting only Podman 5
      def container_default_internal_host
       @container_internal_host ||= podman? ? "host.containers.internal" : "host.docker.internal"
     end
@@ -487,6 +491,7 @@ module Porta
     end
 
     # @return [String] the IP that --add-host=somehostname:host-gateway option would produce inside a container
+    # @note this method will not be needed if we start supporting only Podman 5 (or it can replace #container_default_internal_ip)
     def container_internal_ip_from_host_gateway
       return @container_internal_ip_from_host_gateway if @container_internal_ip_from_host_gateway
 
@@ -496,11 +501,13 @@ module Porta
     end
 
     # @return [String] hostname or IP address to access the container host
+    # @note this method will not be needed if we start supporting only Podman 5
     def container_internal_host
       options[:container_internal_host] ||= need_to_add_internal_hosts? ? container_default_gw : container_default_internal_host
     end
 
     # @return [String] IP address to access the container host
+    # @note this method will not be needed if we start supporting only Podman 5 (can be replaced by #container_default_internal_ip)
     def container_internal_ip
       @container_internal_ip ||= if need_to_add_internal_hosts?
         if host_gateway_supported?
@@ -516,13 +523,15 @@ module Porta
     # With docker and podman/slirp4netns the returned gw is an IP of the host OS
     # on podman/pasta though, this is the local OS network gw so not really useful
     # @return [String] IP address of default gateway from within the container
+    # @note this method will not be needed if we start supporting only Podman 5
     def container_default_gw(image: nil)
       gw_ip_cmd = %{printf "%d.%d.%d.%d" $(awk '$2 == 00000000 && $8 == 00000000 { for (i = 8; i >= 2; i=i-2) { print "0x" substr($3, i-1, 2) } }' /proc/net/route)}
       `#{container_tool} run #{container_slirp4netns_arg} --rm --entrypoint /bin/bash #{image || options[:apicast_image]} -c #{gw_ip_cmd.shellescape}`
     end
 
     # @return [String] necessary slirp4netns
-    # @note `need_to_add_internal_hosts?` ensures this will only be non-blank on Podman 4 and earlier
+    # @note this method will not be needed if we start supporting only Podman 5
+    #   also `need_to_add_internal_hosts?` ensures this will only be non-blank on Podman 4 and earlier
     def container_slirp4netns_arg
       return @slirp4netns if defined? @slirp4netns
 
@@ -530,6 +539,7 @@ module Porta
     end
 
     # @return [Boolean] whether container runtime supports the option --add-host=some.example.com:host-gateway
+    # @note this method will not be needed if we start supporting only Podman 5
     def host_gateway_supported?
       return @host_gateway_supported if defined? @host_gateway_supported
 
@@ -537,11 +547,13 @@ module Porta
     end
 
     # @return [String] the ip or magic value that we should use in `--add-host=target.hostname:ip_or_magic_value`
+    # @note this method will not be needed if we start supporting only Podman 5
     def container_add_host_target
       @container_add_host_target ||= host_gateway_supported? ? "host-gateway" : container_internal_ip
     end
 
     # @return [String] the --add-hosts options needed to start containers
+    # @note this method can be simplified if we start supporting only Podman 5
     def container_add_hosts_arg
       return @container_add_hosts_arg if @container_add_hosts_arg
 
