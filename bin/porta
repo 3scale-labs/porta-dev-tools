@@ -539,7 +539,9 @@ module Porta
     end
 
     # @return [Boolean] whether container runtime supports the option --add-host=some.example.com:host-gateway
-    # @note this method will not be needed if we start supporting only Podman 5
+    # @note this method is not supposed to be needed if we start supporting only
+    #       Podman 5. But there are some issues with pasta and bridge mode,
+    #       see https://github.com/containers/podman/issues/19213
     def host_gateway_supported?
       return @host_gateway_supported if defined? @host_gateway_supported
 
