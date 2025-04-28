@@ -51,6 +51,8 @@ module Porta
     admin_access_token: 'secret',
     internal_api_user: 'system_app',
     internal_api_password: 'password',
+    config_events_hook: 'http://master-account.3scale.localhost:3000/master/events/import',
+    config_events_hook_shared_secret: 'supersecret',
     apicast_access_token: 'apicastsecret',
     apicast_registry_url: 'https://apicast-staging.pro-saas.3sca.net/policies',
     sidekiq_prometheus_port: "9395",
@@ -119,6 +121,8 @@ module Porta
       env = options[:apisonator_env] || {}
       env["CONFIG_INTERNAL_API_USER"] ||= options[:internal_api_user]
       env["CONFIG_INTERNAL_API_PASSWORD"] ||= options[:internal_api_password]
+      env["CONFIG_EVENTS_HOOK"] ||= options[:config_events_hook]
+      env["CONFIG_EVENTS_HOOK_SHARED_SECRET"] ||= options[:config_events_hook_shared_secret]
       env["CONFIG_QUEUES_MASTER_NAME"] ||= "#{container_internal_host}:6379/5"
       env["CONFIG_REDIS_PROXY"] ||= "#{container_internal_host}:6379/6"
       env["RACK_ENV"] ||= "production"
