@@ -674,7 +674,7 @@ module Porta
 
     def with_asdf(cmd)
       shell = ENV["SHELL"] || "sh"
-      "asdf env ruby #{shell} -c #{cmd.shellescape}"
+      "asdf env ruby -- #{shell} -c #{cmd.shellescape}"
     end
 
     def with_rbenv(cmd)
