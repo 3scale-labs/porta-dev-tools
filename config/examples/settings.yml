@@ -20,4 +20,4 @@ settings:
   aws_secret_access_key: '<aws-secret-access-key>'
   aws_bucket: '<aws-bucket>'
   aws_region: '<aws-region>'
-  apicast_registry_url: 'https://apicast-staging.pro-saas.3sca.net/policies'
+  apicast_registry_url: 'https://policies.apicast.io/latest/policies.json'
